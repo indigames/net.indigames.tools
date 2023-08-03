@@ -1,0 +1,8 @@
+﻿{
+  "name": "net.indigames.tools",
+  "version": "0.0.1",
+  "displayName": "Indi Games Tools",
+  "description": "Tools",
+  "unity": "2021.3",
+  "unityRelease": "27f1"
+}
