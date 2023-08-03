@@ -1,11 +1,15 @@
-﻿using System;
+﻿using UnityEngine;
 using UnityEditor;
-using UnityEngine;
+using System;
+using System.Collections;
+using System.Collections.Generic;
 
-namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
+namespace ScriptableObjectBrowser
 {
+
     public class PromptForText : PopupWindowContent
     {
+
         public static void Show(string prompt, Action<string> callback)
         {
             PopupWindow.Show(GUILayoutUtility.GetLastRect(), new PromptForText(prompt, callback));
@@ -49,4 +53,6 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             GUILayout.EndArea();
         }
     }
+
+
 }

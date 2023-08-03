@@ -1,24 +1,23 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
+using UnityEngine;
 using UnityEditor;
 using UnityEditor.Callbacks;
-using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
+namespace ScriptableObjectBrowser
 {
     public class ScriptableObjectBrowser : EditorWindow
     {
         static int BROWSE_AREA_WIDTH = 320;
         static int ENTRY_LINE_HEIGHT = 22;
 
-        private static LinkedList<ScriptableObject> EditorHistory = new LinkedList<ScriptableObject>();
+        private static LinkedList<ScriptableObject> EditorHistory = new();
         private static int EDITOR_HISTORY_MAX = 60;
 
         private static Dictionary<Type, ScritpableObjectBrowserEditor> editors = null;
-        private static List<Type> browsable_types = new List<Type>();
+        private static List<Type> browsable_types = new();
         private static string[] browsable_type_names;
 
         static void ReloadScriptableObjectBrowserEditors()
@@ -27,8 +26,14 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             editors = new Dictionary<Type, ScritpableObjectBrowserEditor>();
             var browsable_type_names = new List<string>();
 
-            var types = Assembly.GetExecutingAssembly().GetTypes().Where(t =>
-                t.BaseType != null && t.BaseType.IsGenericType && t.BaseType.GetGenericTypeDefinition() == typeof(ScriptableObjectBrowserEditor<>));
+            var allAssemblies = AppDomain.CurrentDomain.GetAssemblies();
+
+            var types = allAssemblies.SelectMany(assembly => assembly.GetTypes())
+                .Where(t =>
+                    t.BaseType != null &&
+                    t.BaseType.IsGenericType &&
+                    t.BaseType.GetGenericTypeDefinition() == typeof(ScriptableObjectBrowserEditor<>));
+
             foreach (var type in types)
             {
                 var t = type.BaseType.GetGenericArguments()[0];
@@ -36,6 +41,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 browsable_types.Add(t);
                 browsable_type_names.Add(t.Name);
             }
+
             ScriptableObjectBrowser.browsable_type_names = browsable_type_names.ToArray();
         }
 
@@ -46,8 +52,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
 
             if (currentEditor == null && currentObject != null)
                 OpenObject(currentObject);
-            else
-                if (browsable_types.Count > 0)
+            else if (browsable_types.Count > 0)
                 SwitchToEditorType(browsable_types[0]);
         }
 
@@ -130,7 +135,8 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
 
                 var loaded_assets = AssetDatabase.LoadAllAssetsAtPath(path);
                 foreach (var asset in loaded_assets)
-                    if (type.IsAssignableFrom(asset.GetType())) found_assets.Add(asset);
+                    if (type.IsAssignableFrom(asset.GetType()))
+                        found_assets.Add(asset);
             }
 
             foreach (var asset in found_assets)
@@ -187,6 +193,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 var entry = CreateAssetEntry(asset);
                 this.asset_list.Add(entry);
             }
+
             this.ResortEntries(this.filter_text);
         }
 
@@ -253,6 +260,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                     entry.visible = true;
                     continue;
                 }
+
                 if (filter_text.Length > entry.path.Length) continue;
 
                 var last_index = 0;
@@ -263,6 +271,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                     if (last_index < 0) break;
                     last_index++;
                 }
+
                 entry.visible = last_index >= 0;
                 if (entry.visible)
                 {
@@ -288,26 +297,33 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             var focus_control_name = this.GetHashCode() + "browse_focus_id";
 
             GUI.color = Color.clear;
-            var dummy_control_rect = EditorGUILayout.GetControlRect(false, 0); dummy_control_rect.width = 0; GUI.SetNextControlName(dummy_control_name); EditorGUI.TextField(dummy_control_rect, "");
+            var dummy_control_rect = EditorGUILayout.GetControlRect(false, 0);
+            dummy_control_rect.width = 0;
+            GUI.SetNextControlName(dummy_control_name);
+            EditorGUI.TextField(dummy_control_rect, "");
             GUI.color = Color.white;
 
             var new_editor_type_index = EditorGUILayout.Popup(this.currentEditorTypeIndex, browsable_type_names);
-            if (new_editor_type_index != this.currentEditorTypeIndex) this.SwitchToEditorType(browsable_types[new_editor_type_index]);
+            if (new_editor_type_index != this.currentEditorTypeIndex)
+                this.SwitchToEditorType(browsable_types[new_editor_type_index]);
 
             EditorGUILayout.BeginHorizontal();
 
             GUI.enabled = currentEditor?.DefaultStoragePath != null;
-            if (GUILayout.Button(EditorGUIUtility.IconContent("Toolbar Plus"), EditorStyles.miniButton, GUILayout.Width(24), GUILayout.Height(18)))
+            if (GUILayout.Button(EditorGUIUtility.IconContent("Toolbar Plus"), EditorStyles.miniButton,
+                    GUILayout.Width(24), GUILayout.Height(18)))
                 this.CreateNewEntry();
             GUI.enabled = true;
 
             GUI.enabled = currentEditor?.DefaultStoragePath != null;
-            if (GUILayout.Button(EditorGUIUtility.IconContent("Toolbar Plus More"), EditorStyles.miniButton, GUILayout.Width(24), GUILayout.Height(18)))
+            if (GUILayout.Button(EditorGUIUtility.IconContent("Toolbar Plus More"), EditorStyles.miniButton,
+                    GUILayout.Width(24), GUILayout.Height(18)))
                 this.ImportEntries();
             GUI.enabled = true;
 
             GUI.enabled = currentEditor?.ContextMenu != null;
-            if (GUILayout.Button(EditorGUIUtility.IconContent("SettingsIcon"), EditorStyles.miniButton, GUILayout.Width(24), GUILayout.Height(18)))
+            if (GUILayout.Button(EditorGUIUtility.IconContent("SettingsIcon"), EditorStyles.miniButton,
+                    GUILayout.Width(24), GUILayout.Height(18)))
                 currentEditor?.ContextMenu.ShowAsContext();
             GUI.enabled = true;
 
@@ -320,12 +336,14 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 ResortEntries("");
                 GUIUtility.keyboardControl = 0;
             }
+
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space();
 
             var editing_text = EditorGUIUtility.editingTextField;
-            if (!editing_text && Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.LeftArrow && (Event.current.control || Event.current.command))
+            if (!editing_text && Event.current.type == EventType.KeyDown &&
+                Event.current.keyCode == KeyCode.LeftArrow && (Event.current.control || Event.current.command))
             {
                 Event.current.Use();
                 SelectPrevious();
@@ -340,14 +358,16 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 Event.current.Use();
             }
 
-            if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.N && (Event.current.control || Event.current.command))
+            if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.N &&
+                (Event.current.control || Event.current.command))
             {
                 Event.current.Use();
                 this.CreateNewEntry();
             }
 
             if (Event.current.type == EventType.KeyDown && (Event.current.keyCode == KeyCode.F2 ||
-                ((Event.current.control || Event.current.command) && Event.current.keyCode == KeyCode.R)))
+                                                            ((Event.current.control || Event.current.command) &&
+                                                             Event.current.keyCode == KeyCode.R)))
             {
                 Event.current.Use();
                 this.RenameCurrentEntry();
@@ -360,14 +380,17 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                     ResortEntries("");
                     GUI.FocusControl(dummy_control_name);
                 }
-                if (Event.current.keyCode == KeyCode.UpArrow || Event.current.keyCode == KeyCode.DownArrow || Event.current.keyCode == KeyCode.PageUp || Event.current.keyCode == KeyCode.PageDown)
+
+                if (Event.current.keyCode == KeyCode.UpArrow || Event.current.keyCode == KeyCode.DownArrow ||
+                    Event.current.keyCode == KeyCode.PageUp || Event.current.keyCode == KeyCode.PageDown)
                 {
                     GUI.FocusControl(focus_control_name);
                 }
             }
 
 
-            browse_scroll = GUILayout.BeginScrollView(browse_scroll, false, false, GUIStyle.none, GUI.skin.verticalScrollbar);
+            browse_scroll =
+                GUILayout.BeginScrollView(browse_scroll, false, false, GUIStyle.none, GUI.skin.verticalScrollbar);
             var rect_entry = new Rect(0, 0, area.width, ENTRY_LINE_HEIGHT);
             foreach (var asset in sorted_asset_list)
                 RenderAssetEntry(asset, ref rect_entry);
@@ -376,10 +399,13 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             var scroll_rect = GUILayoutUtility.GetLastRect();
 
             GUI.SetNextControlName(focus_control_name);
-            GUI.color = Color.clear; EditorGUI.Toggle(scroll_rect, true); GUI.color = Color.white;
+            GUI.color = Color.clear;
+            EditorGUI.Toggle(scroll_rect, true);
+            GUI.color = Color.white;
             this.browse_control_focused = GUI.GetNameOfFocusedControl() == focus_control_name;
 
-            if (this.browse_control_focused && sorted_asset_list.Count > 0 && Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape)
+            if (this.browse_control_focused && sorted_asset_list.Count > 0 && Event.current.type == EventType.KeyDown &&
+                Event.current.keyCode == KeyCode.Escape)
             {
                 ResortEntries("");
                 GUI.FocusControl(filter_control_name);
@@ -395,33 +421,33 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
 
                 if (Event.current.keyCode == KeyCode.UpArrow)
                 {
-                    var target_asset = current_selection_index < 0 ?
-                        currentSelectionEntry = sorted_asset_list[max_index] :
-                        sorted_asset_list[Mathf.Max(min_index, current_selection_index - 1)];
+                    var target_asset = current_selection_index < 0
+                        ? currentSelectionEntry = sorted_asset_list[max_index]
+                        : sorted_asset_list[Mathf.Max(min_index, current_selection_index - 1)];
                     if (Event.current.shift) SelectionToRange(target_asset);
                     else SelectionSingle(target_asset);
                 }
                 else if (Event.current.keyCode == KeyCode.DownArrow)
                 {
-                    var target_asset = current_selection_index < 0 ?
-                        currentSelectionEntry = sorted_asset_list[min_index] :
-                        sorted_asset_list[Mathf.Min(max_index, current_selection_index + 1)];
+                    var target_asset = current_selection_index < 0
+                        ? currentSelectionEntry = sorted_asset_list[min_index]
+                        : sorted_asset_list[Mathf.Min(max_index, current_selection_index + 1)];
                     if (Event.current.shift) SelectionToRange(target_asset);
                     else SelectionSingle(target_asset);
                 }
                 else if (Event.current.keyCode == KeyCode.PageUp)
                 {
-                    var target_asset = current_selection_index < 0 ?
-                        currentSelectionEntry = sorted_asset_list[max_index] :
-                        sorted_asset_list[Mathf.Max(min_index, current_selection_index - page_index_count)];
+                    var target_asset = current_selection_index < 0
+                        ? currentSelectionEntry = sorted_asset_list[max_index]
+                        : sorted_asset_list[Mathf.Max(min_index, current_selection_index - page_index_count)];
                     if (Event.current.shift) SelectionToRange(target_asset);
                     else SelectionSingle(target_asset);
                 }
                 else if (Event.current.keyCode == KeyCode.PageDown)
                 {
-                    var target_asset = current_selection_index < 0 ?
-                        currentSelectionEntry = sorted_asset_list[min_index] :
-                        sorted_asset_list[Mathf.Min(max_index, current_selection_index + page_index_count)];
+                    var target_asset = current_selection_index < 0
+                        ? currentSelectionEntry = sorted_asset_list[min_index]
+                        : sorted_asset_list[Mathf.Min(max_index, current_selection_index + page_index_count)];
                     if (Event.current.shift) SelectionToRange(target_asset);
                     else SelectionSingle(target_asset);
                 }
@@ -451,7 +477,9 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             }
 
             #region SHIFT MOVE SELECTION WHILE EDITING
-            if (!this.browse_control_focused && sorted_asset_list.Count > 0 && Event.current.type == EventType.KeyDown && (Event.current.control || Event.current.command))
+
+            if (!this.browse_control_focused && sorted_asset_list.Count > 0 &&
+                Event.current.type == EventType.KeyDown && (Event.current.control || Event.current.command))
             {
                 var start_selection_index = sorted_asset_list.IndexOf(startSelectionEntry);
                 var current_selection_index = sorted_asset_list.IndexOf(currentSelectionEntry);
@@ -461,33 +489,34 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
 
                 if (Event.current.keyCode == KeyCode.UpArrow)
                 {
-                    var target_asset = current_selection_index < 0 ?
-                        currentSelectionEntry = sorted_asset_list[max_index] :
-                        sorted_asset_list[Mathf.Max(min_index, current_selection_index - 1)];
+                    var target_asset = current_selection_index < 0
+                        ? currentSelectionEntry = sorted_asset_list[max_index]
+                        : sorted_asset_list[Mathf.Max(min_index, current_selection_index - 1)];
                     SelectionSingle(target_asset);
-                    GUIUtility.keyboardControl = 0; ;
+                    GUIUtility.keyboardControl = 0;
+                    ;
                 }
                 else if (Event.current.keyCode == KeyCode.DownArrow)
                 {
-                    var target_asset = current_selection_index < 0 ?
-                        currentSelectionEntry = sorted_asset_list[min_index] :
-                        sorted_asset_list[Mathf.Min(max_index, current_selection_index + 1)];
+                    var target_asset = current_selection_index < 0
+                        ? currentSelectionEntry = sorted_asset_list[min_index]
+                        : sorted_asset_list[Mathf.Min(max_index, current_selection_index + 1)];
                     SelectionSingle(target_asset);
                     GUIUtility.keyboardControl = 0;
                 }
                 else if (Event.current.keyCode == KeyCode.PageUp)
                 {
-                    var target_asset = current_selection_index < 0 ?
-                        currentSelectionEntry = sorted_asset_list[max_index] :
-                        sorted_asset_list[Mathf.Max(min_index, current_selection_index - page_index_count)];
+                    var target_asset = current_selection_index < 0
+                        ? currentSelectionEntry = sorted_asset_list[max_index]
+                        : sorted_asset_list[Mathf.Max(min_index, current_selection_index - page_index_count)];
                     SelectionSingle(target_asset);
                     GUIUtility.keyboardControl = 0;
                 }
                 else if (Event.current.keyCode == KeyCode.PageDown)
                 {
-                    var target_asset = current_selection_index < 0 ?
-                        currentSelectionEntry = sorted_asset_list[min_index] :
-                        sorted_asset_list[Mathf.Min(max_index, current_selection_index + page_index_count)];
+                    var target_asset = current_selection_index < 0
+                        ? currentSelectionEntry = sorted_asset_list[min_index]
+                        : sorted_asset_list[Mathf.Min(max_index, current_selection_index + page_index_count)];
                     SelectionSingle(target_asset);
                     GUIUtility.keyboardControl = 0;
                 }
@@ -504,17 +533,21 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             if (asset.visible == false) return;
             EditorGUILayout.BeginHorizontal(GUILayout.MinWidth(rect_entry.width));
 
-            var selected_color = this.browse_control_focused ? new Color(62 / 255f, 125 / 255f, 231 / 255f) : new Color(0.6f, 0.6f, 0.6f);
+            var selected_color = this.browse_control_focused
+                ? new Color(62 / 255f, 125 / 255f, 231 / 255f)
+                : new Color(0.6f, 0.6f, 0.6f);
             if (selections.Contains(asset.asset)) EditorGUI.DrawRect(rect_entry, selected_color);
 
             var content = new GUIContent(asset.name, text_scriptable_object);
-            EditorGUILayout.LabelField(content, EditorStyles.boldLabel, GUILayout.Width(EditorStyles.boldLabel.CalcSize(content).x));
+            EditorGUILayout.LabelField(content, EditorStyles.boldLabel,
+                GUILayout.Width(EditorStyles.boldLabel.CalcSize(content).x));
             EditorGUILayout.LabelField(asset.path, EditorStyles.miniLabel);
             EditorGUILayout.EndHorizontal();
             rect_entry.y += rect_entry.height;
 
             var r = GUILayoutUtility.GetLastRect();
-            if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && r.Contains(Event.current.mousePosition))
+            if (Event.current.type == EventType.MouseDown && Event.current.button == 0 &&
+                r.Contains(Event.current.mousePosition))
             {
                 if (Event.current.control)
                     SelectionSingleToogle(asset);
@@ -549,7 +582,8 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
         {
             if (selections.Contains(asset.asset) && selections.Count <= 1) return;
             currentSelectionEntry = startSelectionEntry = asset;
-            if (selections.Contains(asset.asset)) selections.Remove(asset.asset); else selections.Add(asset.asset);
+            if (selections.Contains(asset.asset)) selections.Remove(asset.asset);
+            else selections.Add(asset.asset);
             SelectionChanged();
         }
 
@@ -583,7 +617,12 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
         void SelectionChanged()
         {
             this.currentObject = null;
-            foreach (var selection in selections) { this.currentObject = selection; break; }
+            foreach (var selection in selections)
+            {
+                this.currentObject = selection;
+                break;
+            }
+
             this.currentEditor.SetTargetObjects(selections.ToArray());
             Repaint();
         }
@@ -597,6 +636,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 selecting_previous = false;
                 return;
             }
+
             if (currentSelectionEntry != null)
             {
                 var entry = (ScriptableObject)currentSelectionEntry.asset;
@@ -604,12 +644,14 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 {
                     return;
                 }
+
                 EditorHistory.AddLast(entry);
                 while (EditorHistory.Count > EDITOR_HISTORY_MAX) EditorHistory.RemoveFirst();
             }
         }
 
         static bool selecting_previous = false;
+
         void SelectPrevious()
         {
             while (EditorHistory.Count > 0 && EditorHistory.Last() == null) EditorHistory.RemoveLast();
@@ -623,6 +665,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
         }
 
         Vector2 inspectScroll = new Vector2(0, 0);
+
         void OnInspect(Rect area)
         {
             area.x = area.y = 0;
@@ -670,7 +713,9 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
         }
 
         void ImportEntries()
-        #region ImportEntries
+
+            #region ImportEntries
+
         {
             var r = new Rect();
             r.position = this.position.position;
@@ -687,7 +732,9 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
         }
 
         void CreateNewEntry()
-        #region CreateNewEntry
+
+            #region CreateNewEntry
+
         {
             var r = new Rect();
             r.position = this.position.position;
@@ -699,6 +746,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
         }
 
         #region Create new entry popup
+
         class CreateNewEntryPopup : PopupWindowContent
         {
             Rect position;
@@ -741,9 +789,11 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 if (err)
                 {
                     rect.y += rect.height + 2;
-                    rect.x += 2; rect.width -= 4;
+                    rect.x += 2;
+                    rect.width -= 4;
                     EditorGUI.HelpBox(rect, "Object with the same name already exist", MessageType.Error);
                 }
+
                 if (Event.current.keyCode == KeyCode.Return) this.ConfirmNewEntry();
             }
 
@@ -754,6 +804,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 this.callback?.Invoke(this.entryValue);
             }
         }
+
         #endregion
 
         void FinishCreateNewEntry(string name)
@@ -762,6 +813,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             CreateNewEntry(name);
             Repaint();
         }
+
         void FinishImportEntries(string directory)
         {
             Repaint();
@@ -769,6 +821,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             var e = this.currentEditor;
             this.currentEditor.ImportBatchData(directory, AddAssetEntry);
         }
+
         #endregion
 
         public Object CreateNewEntry(string name)
@@ -784,7 +837,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             else
                 path = this.currentEditor.DefaultStoragePath + "/" + name + ".asset";
 
-            ScriptableObject instance = CreateInstance(this.currentType);
+            ScriptableObject instance = ScriptableObject.CreateInstance(this.currentType);
             instance.name = name;
             AssetDatabase.CreateAsset(instance, path);
             this.AddAssetEntry(instance);
@@ -807,6 +860,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 }
                 else
                     path = this.currentEditor.DefaultStoragePath + "/" + name + ".asset";
+
                 if (AssetDatabase.LoadAssetAtPath(path, typeof(Object)) != null) continue;
 
                 ScriptableObject instance = (ScriptableObject)Activator.CreateInstance(this.currentType);
@@ -819,19 +873,21 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             AddAssetEntries(entries);
             return entries;
         }
+
         #endregion
 
 
         public static bool FuzzyMatch(string stringToSearch, string pattern, out int outScore)
         {
             // Score consts
-            const int adjacencyBonus = 3;               // bonus for adjacent matches
-            const int separatorBonus = 10;              // bonus if match occurs after a separator
-            const int camelBonus = 10;                  // bonus if match is uppercase and prev is lower
+            const int adjacencyBonus = 3; // bonus for adjacent matches
+            const int separatorBonus = 10; // bonus if match occurs after a separator
+            const int camelBonus = 10; // bonus if match is uppercase and prev is lower
 
-            const int leadingLetterPenalty = -3;        // penalty applied for every letter in stringToSearch before the first match
-            const int maxLeadingLetterPenalty = -9;     // maximum penalty for leading letters
-            const int unmatchedLetterPenalty = -1;      // penalty for every letter that doesn't matter
+            const int
+                leadingLetterPenalty = -3; // penalty applied for every letter in stringToSearch before the first match
+            const int maxLeadingLetterPenalty = -9; // maximum penalty for leading letters
+            const int unmatchedLetterPenalty = -1; // penalty for every letter that doesn't matter
 
 
             // Loop variables
@@ -842,7 +898,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             var strLength = stringToSearch.Length;
             var prevMatched = false;
             var prevLower = false;
-            var prevSeparator = true;                   // true if first letter match gets separator bonus
+            var prevSeparator = true; // true if first letter match gets separator bonus
 
             // Use "best" matched letter if multiple string letters match the pattern
             char? bestLetter = null;

@@ -1,26 +1,26 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
-using System.Linq;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
-namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
+namespace ScriptableObjectBrowser
 {
     public abstract class ScritpableObjectBrowserEditor
     {
         public ScriptableObjectBrowser browser;
-        protected UnityEditor.Editor cachedEditor = null;
+        protected Editor cachedEditor = null;
 
         public virtual void SetTargetObjects(UnityEngine.Object[] objs) { }
         public virtual void RenderInspector() { }
+
         /// <summary>
         /// 
         /// </summary>
         /// <param name="directory">Directory of input file</param>
         /// <param name="callback">callback for adding new ScriptableObject to ListView</param>
-        public virtual void ImportBatchData(string directory, System.Action<ScriptableObject> callback) { }
+        public virtual void ImportBatchData(string directory, Action<ScriptableObject> callback) { }
 
         protected bool createDataFolder = false;
         public bool CreateDataFolder => createDataFolder;
@@ -34,7 +34,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             if (path.EndsWith(".asset") == false) path += ".asset";
             if (new FileInfo(path).Exists) return null;
 
-            var result = System.Activator.CreateInstance<T>();
+            var result = Activator.CreateInstance<T>();
             AssetDatabase.CreateAsset(result, path);
             AssetDatabase.ImportAsset(path);
 
@@ -55,7 +55,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             var path = AssetDatabase.GetAssetPath(obj);
             if (string.IsNullOrEmpty(path)) return null;
 
-            var asset = System.Activator.CreateInstance<T>();
+            var asset = Activator.CreateInstance<T>();
             asset.name = name;
             AssetDatabase.AddObjectToAsset(asset, path);
             AssetDatabase.ImportAsset(path);
@@ -87,7 +87,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
 
         protected void Ping(UnityEngine.Object o)
         {
-            UnityEditor.EditorGUIUtility.PingObject(o);
+            EditorGUIUtility.PingObject(o);
         }
 
 
@@ -104,7 +104,8 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             return new_go;
         }
 
-        protected GameObject CreateLocalPrefab(UnityEngine.Object asset, string relPath, Action<GameObject> onPrefabCreated)
+        protected GameObject CreateLocalPrefab(UnityEngine.Object asset, string relPath,
+            Action<GameObject> onPrefabCreated)
         {
             var path = GetAssetContainingFolder(asset);
             if (string.IsNullOrEmpty(path)) return null;
@@ -143,8 +144,9 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 assetPaths.Add(AssetDatabase.GUIDToAssetPath(objUID));
 
             foreach (var assetPath in assetPaths)
-                foreach (var loadedAsset in AssetDatabase.LoadAllAssetsAtPath(assetPath))
-                    if (typeof(T).IsAssignableFrom(loadedAsset.GetType())) results.Add((T)loadedAsset);
+            foreach (var loadedAsset in AssetDatabase.LoadAllAssetsAtPath(assetPath))
+                if (typeof(T).IsAssignableFrom(loadedAsset.GetType()))
+                    results.Add((T)loadedAsset);
 
             return results;
         }
@@ -159,8 +161,9 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 assetPaths.Add(AssetDatabase.GUIDToAssetPath(objUID));
 
             foreach (var assetPath in assetPaths)
-                foreach (var loadedAsset in AssetDatabase.LoadAllAssetsAtPath(assetPath))
-                    if (typeof(T).IsAssignableFrom(loadedAsset.GetType())) results.Add((T)loadedAsset);
+            foreach (var loadedAsset in AssetDatabase.LoadAllAssetsAtPath(assetPath))
+                if (typeof(T).IsAssignableFrom(loadedAsset.GetType()))
+                    results.Add((T)loadedAsset);
 
             return results;
         }
@@ -176,14 +179,21 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
         T targetObject;
 
         protected T Target => (T)cachedEditor.target;
-        protected IEnumerable<T> Targets { get { foreach (UnityEngine.Object t in cachedEditor.targets) yield return (T)t; } }
+
+        protected IEnumerable<T> Targets
+        {
+            get
+            {
+                foreach (UnityEngine.Object t in cachedEditor.targets) yield return (T)t;
+            }
+        }
 
         public override void SetTargetObjects(UnityEngine.Object[] objs)
         {
             if (objs == null || objs.Length <= 0) targetObject = null;
             else targetObject = (T)objs[0];
 
-            UnityEditor.Editor.CreateCachedEditor(objs, null, ref this.cachedEditor);
+            Editor.CreateCachedEditor(objs, null, ref this.cachedEditor);
             if (this.cachedEditor != null) this.cachedEditor.ResetTarget();
         }
 
@@ -195,7 +205,6 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
 
         protected void DrawDefaultInspector()
         {
-            //this.cachedEditor.DrawDefaultInspector();
             this.cachedEditor.OnInspectorGUI();
         }
 
@@ -255,6 +264,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
         {
             GUILayout.Space(32);
         }
+
         protected A GetAssetFromName<A>(string assetName) where A : UnityEngine.Object
         {
             string[] paths = AssetDatabase.FindAssets($"t:{typeof(A).Name} " + assetName);
@@ -263,6 +273,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
             var asset = (A)AssetDatabase.LoadAssetAtPath(assetPath, typeof(A));
             return asset;
         }
+
         protected A[] GetAssetsFromType<A>() where A : UnityEngine.Object
         {
             A[] assets = AssetDatabase.FindAssets($"t:{typeof(A).Name} ")
@@ -274,7 +285,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
 
         public override void ImportBatchData(string directory, Action<ScriptableObject> callback)
         {
-            throw new System.NotImplementedException();
+            throw new NotImplementedException();
         }
     }
 }
