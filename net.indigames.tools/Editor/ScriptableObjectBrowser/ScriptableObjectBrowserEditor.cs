@@ -6,10 +6,6 @@ using System.Linq;
 using System;
 using System.IO;
 
-/* 
- * TODO: ADD A DEFAULT CREATOR FOLDER AND ONCREATE FOLDER
- */
-
 namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
 {
     public abstract class ScritpableObjectBrowserEditor

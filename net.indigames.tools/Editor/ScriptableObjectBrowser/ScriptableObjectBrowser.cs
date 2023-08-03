@@ -7,13 +7,6 @@ using UnityEditor.Callbacks;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-
-////////////////////////////////////////////////////////////////////////
-/// 
-/// The editor goes here
-/// 
-////////////////////////////////////////////////////////////////////////
-
 namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
 {
     public class ScriptableObjectBrowser : EditorWindow
@@ -58,7 +51,7 @@ namespace IndiGamesEditor.Tools.ScriptableObjectBrowser
                 SwitchToEditorType(browsable_types[0]);
         }
 
-        [MenuItem("Window/Scriptable Object Browser %#o")]
+        [MenuItem("Tools/Scriptable Object Browser %#o")]
         public static ScriptableObjectBrowser ShowWindow()
         {
             ReloadScriptableObjectBrowserEditors();
