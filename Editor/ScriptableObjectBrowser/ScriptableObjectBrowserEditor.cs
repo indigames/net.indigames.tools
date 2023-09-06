@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace IndiGamesEditor.Tools.Editor.ScriptableObjectBrowser
+namespace IndiGames.Tools.ScriptableObjectBrowser
 {
     public abstract class ScriptableObjectBrowserEditor
     {

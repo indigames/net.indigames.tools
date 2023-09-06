@@ -1,7 +1,7 @@
 ﻿using System;
 using Object = UnityEngine.Object;
 
-namespace IndiGamesEditor.Tools.Editor.ScriptableObjectBrowser
+namespace IndiGames.Tools.ScriptableObjectBrowser
 {
     [Serializable]
     public class AssetEntry

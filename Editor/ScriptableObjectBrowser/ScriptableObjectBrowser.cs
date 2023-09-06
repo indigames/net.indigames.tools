@@ -7,7 +7,7 @@ using UnityEditor.Callbacks;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace IndiGamesEditor.Tools.Editor.ScriptableObjectBrowser
+namespace IndiGames.Tools.ScriptableObjectBrowser
 {
     public class ScriptableObjectBrowser : EditorWindow
     {

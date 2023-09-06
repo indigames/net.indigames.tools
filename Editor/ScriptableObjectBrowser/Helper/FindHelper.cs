@@ -1,7 +1,7 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
 
-namespace IndiGamesEditor.Tools.Editor.ScriptableObjectBrowser
+namespace IndiGames.Tools.ScriptableObjectBrowser
 {
     public static class FindHelper
     {

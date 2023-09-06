@@ -2,7 +2,7 @@
 using UnityEditor;
 using UnityEngine;
 
-namespace IndiGamesEditor.Tools.Editor.ScriptableObjectBrowser
+namespace IndiGames.Tools.ScriptableObjectBrowser
 {
     public class CreateNewEntryPopup : PopupWindowContent
     {
