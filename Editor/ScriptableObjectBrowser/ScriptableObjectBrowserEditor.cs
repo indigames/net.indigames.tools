@@ -1,18 +1,52 @@
-﻿using UnityEngine;
-using UnityEditor;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using UnityEditor;
+using UnityEngine;
+using Object = UnityEngine.Object;
 
-namespace ScriptableObjectBrowser
+namespace IndiGamesEditor.Tools.Editor.ScriptableObjectBrowser
 {
-    public abstract class ScritpableObjectBrowserEditor
+    public abstract class ScriptableObjectBrowserEditor
     {
-        public ScriptableObjectBrowser browser;
-        protected Editor cachedEditor = null;
+        public ScriptableObjectBrowser Browser;
 
-        public virtual void SetTargetObjects(UnityEngine.Object[] objs) { }
+        /// <summary>
+        /// The <c>DefaultStoragePath</c> property is
+        /// used to set the default path for the Data.
+        /// <example>
+        /// <code>
+        /// public YourClassEditor()
+        /// {
+        ///    this.DefaultStoragePath = "Assets/ScriptableObjects/Data/FolderSampleName";
+        /// }
+        /// </code>
+        /// </example>
+        /// </summary>
+        public string DefaultStoragePath { get; protected set; } = null;
+
+        /// <summary>
+        /// The <c>CreateDataFolder</c> property is
+        /// used to know if the <see cref="ScriptableObjectBrowser"/>
+        /// should create a folder for the Data. 
+        /// <example>
+        /// <code>
+        /// public YourClassEditor()
+        /// {
+        ///     this.CreateDataFolder = true;
+        /// }
+        /// </code>
+        /// </example>
+        /// </summary>
+
+        public bool CreateDataFolder { get; protected set; } = false;
+
+        public GenericMenu ContextMenu { get; protected set; } = null;
+
+        protected UnityEditor.Editor CachedEditor = null;
+
+        public virtual void SetTargetObjects(Object[] objs) { }
         public virtual void RenderInspector() { }
 
         /// <summary>
@@ -22,14 +56,7 @@ namespace ScriptableObjectBrowser
         /// <param name="callback">callback for adding new ScriptableObject to ListView</param>
         public virtual void ImportBatchData(string directory, Action<ScriptableObject> callback) { }
 
-        protected bool createDataFolder = false;
-        public bool CreateDataFolder => createDataFolder;
-        protected string defaultStoragePath = null;
-        protected GenericMenu contextMenu = null;
-        public string DefaultStoragePath => defaultStoragePath;
-        public GenericMenu ContextMenu => contextMenu;
-
-        protected T CreateAsset<T>(string path) where T : UnityEngine.Object
+        private T CreateAsset<T>(string path) where T : Object
         {
             if (path.EndsWith(".asset") == false) path += ".asset";
             if (new FileInfo(path).Exists) return null;
@@ -41,16 +68,16 @@ namespace ScriptableObjectBrowser
             return result;
         }
 
-        protected T CreateLocalAsset<T>(ScriptableObject obj, string path) where T : UnityEngine.Object
+        protected T CreateLocalAsset<T>(ScriptableObject obj, string path) where T : Object
         {
-            var folder_path = GetAssetContainingFolder(obj);
+            var folderPath = GetAssetContainingFolder(obj);
             if (string.IsNullOrEmpty(path)) return null;
 
-            path = Path.Combine(folder_path, path);
+            path = Path.Combine(folderPath, path);
             return CreateAsset<T>(path);
         }
 
-        protected T CreateSubAsset<T>(ScriptableObject obj, string name) where T : UnityEngine.Object
+        protected T CreateSubAsset<T>(ScriptableObject obj, string name) where T : Object
         {
             var path = AssetDatabase.GetAssetPath(obj);
             if (string.IsNullOrEmpty(path)) return null;
@@ -63,7 +90,7 @@ namespace ScriptableObjectBrowser
             return asset;
         }
 
-        protected void RemoveAllSubAsset<T>(ScriptableObject obj) where T : UnityEngine.Object
+        protected void RemoveAllSubAsset<T>(ScriptableObject obj) where T : Object
         {
             var path = AssetDatabase.GetAssetPath(obj);
             if (AssetDatabase.LoadAssetAtPath<ScriptableObject>(path) != obj) return;
@@ -72,7 +99,7 @@ namespace ScriptableObjectBrowser
             foreach (var asset in assets)
             {
                 if (asset == obj) continue;
-                if (!typeof(T).IsAssignableFrom(asset.GetType())) continue;
+                if (!(asset is T)) continue;
                 AssetDatabase.RemoveObjectFromAsset(asset);
             }
 
@@ -85,26 +112,30 @@ namespace ScriptableObjectBrowser
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
         }
 
-        protected void Ping(UnityEngine.Object o)
+        protected void Ping(Object o)
         {
             EditorGUIUtility.PingObject(o);
         }
 
 
-        protected GameObject CreatePrefab(string path, Action<GameObject> onPrefabCreated = null)
+        private GameObject CreatePrefab(string path, Action<GameObject> onPrefabCreated = null)
         {
             if (path.EndsWith(".prefab") == false) path += ".prefab";
+
             var go = new GameObject();
             go.hideFlags = HideFlags.HideInHierarchy;
+
             if (onPrefabCreated != null) onPrefabCreated(go);
-            var new_go = PrefabUtility.SaveAsPrefabAssetAndConnect(go, path, InteractionMode.UserAction);
-            GameObject.DestroyImmediate(go);
-            new_go.hideFlags = HideFlags.None;
+
+            var newGO = PrefabUtility.SaveAsPrefabAssetAndConnect(go, path, InteractionMode.UserAction);
+
+            Object.DestroyImmediate(go);
+            newGO.hideFlags = HideFlags.None;
             AssetDatabase.ImportAsset(path);
-            return new_go;
+            return newGO;
         }
 
-        protected GameObject CreateLocalPrefab(UnityEngine.Object asset, string relPath,
+        protected GameObject CreateLocalPrefab(Object asset, string relPath,
             Action<GameObject> onPrefabCreated)
         {
             var path = GetAssetContainingFolder(asset);
@@ -116,53 +147,53 @@ namespace ScriptableObjectBrowser
             return CreatePrefab(path, onPrefabCreated);
         }
 
-        protected string CreateLocalFolder(UnityEngine.Object asset, string relpath)
+        protected string CreateLocalFolder(Object asset, string replacePath)
         {
             var path = GetAssetContainingFolder(asset);
-            AssetDatabase.CreateFolder(path, relpath);
-            return Path.Combine(path, relpath);
+            AssetDatabase.CreateFolder(path, replacePath);
+            return Path.Combine(path, replacePath);
         }
 
-        protected string GetAssetContainingFolder(UnityEngine.Object asset)
+        private string GetAssetContainingFolder(Object asset)
         {
             string path = AssetDatabase.GetAssetPath(asset);
             if (string.IsNullOrEmpty(path)) return null;
 
-            var dir = new FileInfo(path).Directory.FullName;
-            var i = dir.IndexOf("Assets");
+            var dir = new FileInfo(path).Directory?.FullName;
+            var i = dir!.IndexOf("Assets", StringComparison.Ordinal);
             dir = dir.Substring(i);
 
             return dir;
         }
 
-        protected List<T> FindAllAssets<T>() where T : UnityEngine.Object
+        protected List<T> FindAllAssets<T>() where T : Object
         {
             List<T> results = new List<T>();
             HashSet<string> assetPaths = new HashSet<string>();
 
-            foreach (var objUID in AssetDatabase.FindAssets($"t:{typeof(T).Name}"))
-                assetPaths.Add(AssetDatabase.GUIDToAssetPath(objUID));
+            foreach (var objUid in AssetDatabase.FindAssets($"t:{typeof(T).Name}"))
+                assetPaths.Add(AssetDatabase.GUIDToAssetPath(objUid));
 
             foreach (var assetPath in assetPaths)
             foreach (var loadedAsset in AssetDatabase.LoadAllAssetsAtPath(assetPath))
-                if (typeof(T).IsAssignableFrom(loadedAsset.GetType()))
+                if (loadedAsset is T)
                     results.Add((T)loadedAsset);
 
             return results;
         }
 
-        protected List<T> FindAllLocalAssets<T>(UnityEngine.Object asset) where T : UnityEngine.Object
+        protected List<T> FindAllLocalAssets<T>(Object asset) where T : Object
         {
             List<T> results = new List<T>();
             HashSet<string> assetPaths = new HashSet<string>();
             string path = GetAssetContainingFolder(asset);
 
-            foreach (var objUID in AssetDatabase.FindAssets($"t:{typeof(T).Name}", new[] { path }))
-                assetPaths.Add(AssetDatabase.GUIDToAssetPath(objUID));
+            foreach (var objUid in AssetDatabase.FindAssets($"t:{typeof(T).Name}", new[] { path }))
+                assetPaths.Add(AssetDatabase.GUIDToAssetPath(objUid));
 
             foreach (var assetPath in assetPaths)
             foreach (var loadedAsset in AssetDatabase.LoadAllAssetsAtPath(assetPath))
-                if (typeof(T).IsAssignableFrom(loadedAsset.GetType()))
+                if (loadedAsset is T)
                     results.Add((T)loadedAsset);
 
             return results;
@@ -174,46 +205,46 @@ namespace ScriptableObjectBrowser
         }
     }
 
-    public abstract class ScriptableObjectBrowserEditor<T> : ScritpableObjectBrowserEditor where T : UnityEngine.Object
+    public abstract class ScriptableObjectBrowserEditor<T> : ScriptableObjectBrowserEditor where T : Object
     {
-        T targetObject;
+        private T _targetObject;
 
-        protected T Target => (T)cachedEditor.target;
+        private T Target => (T)CachedEditor.target;
 
-        protected IEnumerable<T> Targets
+        private IEnumerable<T> Targets
         {
             get
             {
-                foreach (UnityEngine.Object t in cachedEditor.targets) yield return (T)t;
+                foreach (Object t in CachedEditor.targets) yield return (T)t;
             }
         }
 
-        public override void SetTargetObjects(UnityEngine.Object[] objs)
+        public override void SetTargetObjects(Object[] objs)
         {
-            if (objs == null || objs.Length <= 0) targetObject = null;
-            else targetObject = (T)objs[0];
+            if (objs == null || objs.Length <= 0) _targetObject = null;
+            else _targetObject = (T)objs[0];
 
-            Editor.CreateCachedEditor(objs, null, ref this.cachedEditor);
-            if (this.cachedEditor != null) this.cachedEditor.ResetTarget();
+            UnityEditor.Editor.CreateCachedEditor(objs, null, ref CachedEditor);
+            if (CachedEditor != null) CachedEditor.ResetTarget();
         }
 
         public override void RenderInspector()
         {
-            if (targetObject == null) return;
-            CustomInspector(this.cachedEditor.serializedObject);
+            if (_targetObject == null) return;
+            CustomInspector(CachedEditor.serializedObject);
         }
 
-        protected void DrawDefaultInspector()
+        private void DrawDefaultInspector()
         {
-            this.cachedEditor.OnInspectorGUI();
+            this.CachedEditor.OnInspectorGUI();
         }
 
-        public virtual void CustomInspector(SerializedObject obj)
+        protected virtual void CustomInspector(SerializedObject obj)
         {
             DrawDefaultInspector();
         }
 
-        protected void ButtonRun(string label, Action<T> action)
+        private void ButtonRun(string label, Action<T> action)
         {
             if (Targets.Count() > 1) return;
             if (GUILayout.Button(label, EditorStyles.miniButton))
@@ -225,28 +256,28 @@ namespace ScriptableObjectBrowser
 
         protected void ButtonRunPrompt(string label, string prompt, Action<T, string> action)
         {
-            this.ButtonRun(label, (t) => PromptForText.Show(prompt, (str) =>
+            ButtonRun(label, (t) => PromptForText.Show(prompt, (str) =>
             {
                 action(t, str);
                 SetDirty(t);
             }));
         }
 
-        protected void ButtonRunForEach(string label, Action<T> action)
+        private void ButtonRunForEach(string label, Action<T> action)
         {
             if (GUILayout.Button(label, EditorStyles.miniButton)) RunForEach(action);
         }
 
         protected void ButtonRunForEachPrompt(string label, string prompt, Action<T, string> action)
         {
-            this.ButtonRunForEach(label, (t) => PromptForText.Show(prompt, (str) =>
+            ButtonRunForEach(label, (t) => PromptForText.Show(prompt, (str) =>
             {
                 action(t, str);
                 SetDirty(t);
             }));
         }
 
-        protected void RunForEach(Action<T> action)
+        private void RunForEach(Action<T> action)
         {
             foreach (var target in this.Targets)
             {
@@ -255,7 +286,7 @@ namespace ScriptableObjectBrowser
             }
         }
 
-        protected void SetDirty(UnityEngine.Object target)
+        private void SetDirty(Object target)
         {
             EditorUtility.SetDirty(target);
         }
@@ -265,21 +296,39 @@ namespace ScriptableObjectBrowser
             GUILayout.Space(32);
         }
 
-        protected A GetAssetFromName<A>(string assetName) where A : UnityEngine.Object
+        protected A GetAssetFromName<A>(string assetName) where A : Object
         {
             string[] paths = AssetDatabase.FindAssets($"t:{typeof(A).Name} " + assetName);
+
             if (paths.Length <= 0 || assetName == "") return null;
+
             var assetPath = AssetDatabase.GUIDToAssetPath(paths[0]);
             var asset = (A)AssetDatabase.LoadAssetAtPath(assetPath, typeof(A));
             return asset;
         }
 
-        protected A[] GetAssetsFromType<A>() where A : UnityEngine.Object
+        protected A[] GetAssetsFromType<A>() where A : Object
         {
-            A[] assets = AssetDatabase.FindAssets($"t:{typeof(A).Name} ")
-                .Select(x => AssetDatabase.GUIDToAssetPath(x))
-                .SelectMany(x => AssetDatabase.LoadAllAssetsAtPath(x))
-                .OfType<A>().ToArray();
+            string targetType = typeof(A).Name;
+            string[] assetGUIDs = AssetDatabase.FindAssets($"t:{targetType}");
+
+            List<A> assetsList = new List<A>();
+
+            foreach (string guid in assetGUIDs)
+            {
+                string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                Object[] assetsAtPath = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+
+                foreach (Object asset in assetsAtPath)
+                {
+                    if (asset is A a)
+                    {
+                        assetsList.Add(a);
+                    }
+                }
+            }
+
+            A[] assets = assetsList.ToArray();
             return assets;
         }
 

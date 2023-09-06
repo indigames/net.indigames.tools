@@ -1,91 +1,132 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using UnityEngine;
+using System.Reflection;
 using UnityEditor;
 using UnityEditor.Callbacks;
+using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace ScriptableObjectBrowser
+namespace IndiGamesEditor.Tools.Editor.ScriptableObjectBrowser
 {
     public class ScriptableObjectBrowser : EditorWindow
     {
-        static int BROWSE_AREA_WIDTH = 320;
-        static int ENTRY_LINE_HEIGHT = 22;
+        private const int BROWSE_AREA_WIDTH = 320;
+        private const int ENTRY_LINE_HEIGHT = 22;
+        private const int EDITOR_HISTORY_MAX = 60;
 
-        private static LinkedList<ScriptableObject> EditorHistory = new();
-        private static int EDITOR_HISTORY_MAX = 60;
+        private const string SUFFIX_NAME = ".asset";
+        private const string TOOLBAR_PLUS_NAME = "Toolbar Plus More";
+        private const string CONSOLE_WINDOW_EDITOR_NAME = "UnityEditor.ConsoleWindow";
 
-        private static Dictionary<Type, ScritpableObjectBrowserEditor> editors = null;
-        private static List<Type> browsable_types = new();
-        private static string[] browsable_type_names;
+        private const string FILTER_DUMMY = "FILTER_DUMMY";
+        private const string FILTER = "FILTER";
+        private const string BROWSE_FOCUS_ID = "browse_focus_id";
 
-        static void ReloadScriptableObjectBrowserEditors()
+        private static readonly LinkedList<ScriptableObject> EditorHistory = new();
+        private static readonly List<Type> BrowsableTypes = new();
+        private readonly HashSet<Object> _selections = new();
+
+        private static Dictionary<Type, ScriptableObjectBrowserEditor> _editors;
+        private static string[] _browsableTypeNames = Array.Empty<string>();
+        private static GUIStyle _selectedStyle;
+        private static Texture2D _textSO;
+
+        private ScriptableObjectBrowserEditor _currentEditor;
+        private Vector2 _inspectScroll = Vector2.zero;
+        private Vector2 _browseScroll = Vector2.zero;
+        private List<AssetEntry> _assetList = new();
+        private List<AssetEntry> _sortedAssetList = new();
+        private AssetEntry _currentSelectionEntry;
+        private AssetEntry _startSelectionEntry;
+        private Object _currentObject;
+        private Type _currentType;
+
+        private int _currentTypeIndex;
+
+        private string _filterText = String.Empty;
+
+        private bool _isSelectedPrevious;
+        private bool _isControlFocused;
+
+        protected void OnEnable()
         {
-            if (editors != null) return;
-            editors = new Dictionary<Type, ScritpableObjectBrowserEditor>();
-            var browsable_type_names = new List<string>();
+            ReloadBrowserEditors();
+            SetupEditorAssets();
 
-            var allAssemblies = AppDomain.CurrentDomain.GetAssemblies();
+            if (_currentEditor == null && _currentObject != null)
+            {
+                OpenObject(_currentObject);
+            }
+            else if (BrowsableTypes.Count > 0)
+            {
+                GetType(BrowsableTypes[0]);
+            }
+        }
 
-            var types = allAssemblies.SelectMany(assembly => assembly.GetTypes())
+        [MenuItem("IndiGames Tools/SO Browser %#o")]
+        protected static ScriptableObjectBrowser ShowWindow()
+        {
+            ReloadBrowserEditors();
+
+            ScriptableObjectBrowser[] windows = Resources.FindObjectsOfTypeAll<ScriptableObjectBrowser>();
+            if (windows is { Length: > 0 }) return windows[0];
+
+            ScriptableObjectBrowser window = GetWindow<ScriptableObjectBrowser>();
+
+            window.ShowTab();
+            return window;
+        }
+
+
+        private static void ReloadBrowserEditors()
+        {
+            if (_editors != null) return;
+
+            _editors = new();
+            List<string> browsableTypeNames = new();
+
+            Assembly[] allAssemblies = AppDomain.CurrentDomain.GetAssemblies();
+
+            IEnumerable<Type> types = allAssemblies.SelectMany(assembly => assembly.GetTypes())
                 .Where(t =>
                     t.BaseType != null &&
                     t.BaseType.IsGenericType &&
                     t.BaseType.GetGenericTypeDefinition() == typeof(ScriptableObjectBrowserEditor<>));
 
-            foreach (var type in types)
+            foreach (Type type in types)
             {
-                var t = type.BaseType.GetGenericArguments()[0];
-                editors[t] = (ScritpableObjectBrowserEditor)Activator.CreateInstance(type);
-                browsable_types.Add(t);
-                browsable_type_names.Add(t.Name);
+                if (type.BaseType == null && _editors != null) return;
+
+                Type genericArgument = type.BaseType?.GetGenericArguments()[0];
+                _editors[genericArgument!] = (ScriptableObjectBrowserEditor)Activator.CreateInstance(type);
+
+                BrowsableTypes.Add(genericArgument);
+                browsableTypeNames.Add(genericArgument.Name);
             }
 
-            ScriptableObjectBrowser.browsable_type_names = browsable_type_names.ToArray();
+            _browsableTypeNames = browsableTypeNames.ToArray();
         }
 
-        private void OnEnable()
+        protected static void OpenObject(Object obj)
         {
-            ReloadScriptableObjectBrowserEditors();
-            SetupEditorAssets();
+            ScriptableObjectBrowser window = ShowWindow();
+            Type type = obj.GetType();
 
-            if (currentEditor == null && currentObject != null)
-                OpenObject(currentObject);
-            else if (browsable_types.Count > 0)
-                SwitchToEditorType(browsable_types[0]);
-        }
+            window.GetType(type);
+            ScriptableObjectBrowserEditor editor = window._currentEditor;
 
-        [MenuItem("Tools/Scriptable Object Browser %#o")]
-        public static ScriptableObjectBrowser ShowWindow()
-        {
-            ReloadScriptableObjectBrowserEditors();
-
-
-            ScriptableObjectBrowser[] windows = Resources.FindObjectsOfTypeAll<ScriptableObjectBrowser>();
-            if (windows != null && windows.Length > 0) return windows[0];
-
-            var w = GetWindow<ScriptableObjectBrowser>();
-            w.ShowTab();
-            return w;
-        }
-
-        static void OpenObject(Object obj)
-        {
-            var w = ShowWindow();
-            var type = obj.GetType();
-            w.SwitchToEditorType(type);
-            ScritpableObjectBrowserEditor editor = w.currentEditor;
-            editor.SetTargetObjects(new Object[] { obj });
-            w.SelectionSingle(obj);
+            editor.SetTargetObjects(new[] { obj });
+            window.SelectionSingle(obj);
         }
 
         [OnOpenAsset(1)]
         public static bool OnOpenAsset(int instanceID, int line)
         {
-            if (editors == null || Selection.activeObject == null) return false;
-            ReloadScriptableObjectBrowserEditors();
-            if (editors.ContainsKey(Selection.activeObject.GetType()))
+            if (_editors == null || Selection.activeObject == null) return false;
+            ReloadBrowserEditors();
+
+            if (_editors.ContainsKey(Selection.activeObject.GetType()))
             {
                 OpenObject(EditorUtility.InstanceIDToObject(instanceID));
                 return true;
@@ -94,242 +135,525 @@ namespace ScriptableObjectBrowser
             return false; // let unity open the file
         }
 
-        void SwitchToEditorType(Type type)
+        protected void GetType(Type type)
         {
             RecordCurrentSelection();
-            this.currentSelectionEntry = this.startSelectionEntry = null;
-            this.selections.Clear();
+            _currentSelectionEntry = _startSelectionEntry = null;
+            _selections.Clear();
 
-            while (type != null && editors.ContainsKey(type) == false) type = type.BaseType;
+            while (type != null && _editors.ContainsKey(type) == false) type = type.BaseType;
             if (type == null) return;
 
-            currentEditorTypeIndex = browsable_types.IndexOf(type);
-            this.currentEditor = editors[type];
-            this.currentEditor.browser = this;
-            this.currentType = type;
+            _currentTypeIndex = BrowsableTypes.IndexOf(type);
+            _currentEditor = _editors[type];
+            _currentEditor.Browser = this;
+            _currentType = type;
             ResetAssetList(type);
             SelectionChanged();
         }
 
-        int currentEditorTypeIndex = 0;
-        Type currentType = null;
-        ScritpableObjectBrowserEditor currentEditor = null;
-        Object currentObject;
-        List<AssetEntry> asset_list = new List<AssetEntry>();
-        List<AssetEntry> sorted_asset_list = new List<AssetEntry>();
 
-        void ResetAssetList(Type type)
+        protected void ResetAssetList(Type type)
         {
-            var assets = AssetDatabase.FindAssets($"t:{type.Name}");
-            var found_assets = new HashSet<Object>();
-            this.filter_text = "";
+            string[] assets = AssetDatabase.FindAssets($"t:{type.Name}");
 
-            List<AssetEntry> asset_list = new List<AssetEntry>();
+            HashSet<Object> foundAssets = new HashSet<Object>();
 
-            string last_path = null;
-            foreach (var asset_guid in assets)
+            _filterText = String.Empty;
+
+            List<AssetEntry> assetList = new List<AssetEntry>();
+
+            string lastPath = null;
+            foreach (string guid in assets)
             {
-                var path = AssetDatabase.GUIDToAssetPath(asset_guid);
-                if (path == last_path) continue;
-                last_path = path;
+                string path = AssetDatabase.GUIDToAssetPath(guid);
 
-                var loaded_assets = AssetDatabase.LoadAllAssetsAtPath(path);
-                foreach (var asset in loaded_assets)
-                    if (type.IsAssignableFrom(asset.GetType()))
-                        found_assets.Add(asset);
+                if (path == lastPath) continue;
+                lastPath = path;
+
+                Object[] loadedAssets = AssetDatabase.LoadAllAssetsAtPath(path);
+
+                foreach (Object asset in loadedAssets)
+                {
+                    if (type.IsInstanceOfType(asset))
+                    {
+                        foundAssets.Add(asset);
+                    }
+                }
             }
 
-            foreach (var asset in found_assets)
-                asset_list.Add(CreateAssetEntry(asset));
-
-            this.asset_list = asset_list;
-            this.sorted_asset_list = new List<AssetEntry>(asset_list);
-        }
-
-        void ResetAssetList()
-        {
-            ResetAssetList(this.currentType);
-        }
-
-        AssetEntry CreateAssetEntry(Object asset)
-        {
-            var name = asset.name;
-
-            var path = AssetDatabase.GetAssetPath(asset) + "." + name;
-
-            var entry = new AssetEntry()
+            foreach (Object asset in foundAssets)
             {
-                path = path,
-                rpath = ReverseString(path),
-                name = name,
-                asset = asset
+                assetList.Add(CreateAssetEntry(asset));
+            }
+
+            _assetList = assetList;
+            _sortedAssetList = new List<AssetEntry>(assetList);
+        }
+
+
+        protected AssetEntry CreateAssetEntry(Object asset)
+        {
+            string name = asset.name;
+
+            string path = $"{AssetDatabase.GetAssetPath(asset)}.{name}";
+
+            AssetEntry entry = new AssetEntry()
+            {
+                Path = path,
+                RPath = ReverseString(path),
+                Name = name,
+                Asset = asset
             };
 
             return entry;
         }
 
-        void SyncAssetEntry(AssetEntry entry)
+        protected void SyncAssetEntry(AssetEntry entry)
         {
-            var asset = entry.asset;
-            var name = asset.name;
-            var path = AssetDatabase.GetAssetPath(asset) + "." + name;
+            Object asset = entry.Asset;
+            string name = asset.name;
+            string path = $"{AssetDatabase.GetAssetPath(asset)}.{name}";
 
-            entry.path = path;
-            entry.rpath = ReverseString(path);
-            entry.name = name;
+            entry.Path = path;
+            entry.RPath = ReverseString(path);
+            entry.Name = name;
         }
 
-        void AddAssetEntry(Object asset)
+        protected void AddAssetEntry(Object asset)
         {
-            var entry = CreateAssetEntry(asset);
-            this.asset_list.Add(entry);
-            this.ResortEntries(this.filter_text);
+            AssetEntry entry = CreateAssetEntry(asset);
+
+            _assetList.Add(entry);
+
+            ResortEntries(_filterText);
         }
 
-        void AddAssetEntries(List<Object> assets)
+        protected void SetupEditorAssets()
         {
-            foreach (var asset in assets)
+            _textSO = EditorGUIUtility.FindTexture(CONSOLE_WINDOW_EDITOR_NAME);
+            _selectedStyle = new GUIStyle();
+            Texture2D texture2D = new Texture2D(1, 1);
+
+            texture2D.SetPixel(0, 0, new Color(62 / 255f, 125 / 255f, 231 / 255f));
+            texture2D.Apply();
+
+            _selectedStyle.normal.background = texture2D;
+            _selectedStyle.normal.textColor = Color.white;
+            _selectedStyle.fixedHeight = 18;
+        }
+
+        protected void ResortEntries(string textResort)
+        {
+            string filterText = ReverseString(textResort);
+
+            _filterText = textResort;
+            textResort = textResort.ToLower();
+
+            foreach (AssetEntry entry in _assetList)
             {
-                var entry = CreateAssetEntry(asset);
-                this.asset_list.Add(entry);
+                if (textResort.Length == 0)
+                {
+                    entry.Visible = true;
+                    continue;
+                }
+
+                if (textResort.Length > entry.Path.Length) continue;
+
+                int lastIndex = 0;
+                string path = entry.Path.ToLower();
+
+                foreach (char t in textResort)
+                {
+                    lastIndex = path.IndexOf(t, lastIndex);
+                    if (lastIndex < 0) break;
+                    lastIndex++;
+                }
+
+                entry.Visible = lastIndex >= 0;
+
+                if (!entry.Visible) continue;
+
+                FindHelper.Match(entry.RPath, filterText, out int matchAmount);
+                FindHelper.Match(entry.Path, textResort, out int amount);
+
+                entry.MatchAmount = Mathf.Max(matchAmount, amount);
             }
 
-            this.ResortEntries(this.filter_text);
+            _sortedAssetList = new List<AssetEntry>(_assetList);
+            _sortedAssetList.RemoveAll((a) => a.Visible == false);
+
+            if (textResort.Length > 0) _sortedAssetList.Sort((e2, e1) => e1.MatchAmount.CompareTo(e2.MatchAmount));
         }
 
-        class AssetEntry
+        protected void RenderAssetEntry(AssetEntry asset, ref Rect rectEntry)
         {
-            public string path;
-            public string rpath;
-            public string name;
-            public Object asset;
-            public int match_amount;
-            public bool visible = true;
-            public bool selected = false;
+            if (!asset.Visible) return;
+
+            EditorGUILayout.BeginHorizontal(GUILayout.MinWidth(rectEntry.width));
+
+            var selected_color = _isControlFocused
+                ? new Color(62 / 255f, 125 / 255f, 231 / 255f)
+                : new Color(0.6f, 0.6f, 0.6f);
+
+            if (_selections.Contains(asset.Asset)) EditorGUI.DrawRect(rectEntry, selected_color);
+
+            var content = new GUIContent(asset.Name, _textSO);
+
+            EditorGUILayout.LabelField(content, EditorStyles.boldLabel,
+                GUILayout.Width(EditorStyles.boldLabel.CalcSize(content).x));
+
+            EditorGUILayout.LabelField(asset.Path, EditorStyles.miniLabel);
+            EditorGUILayout.EndHorizontal();
+
+            rectEntry.y += rectEntry.height;
+
+            Rect r = GUILayoutUtility.GetLastRect();
+
+            Event currentEvent = Event.current;
+
+            if (currentEvent.type != EventType.MouseDown || currentEvent.button != 0 ||
+                !r.Contains(currentEvent.mousePosition)) return;
+
+            switch (currentEvent.control)
+            {
+                case true:
+                    SelectionSingleToggle(asset);
+                    break;
+
+                default:
+                {
+                    if (currentEvent.shift && _currentSelectionEntry != null)
+                        SelectionToRange(asset);
+                    else
+                        SelectionSingle(asset);
+                    break;
+                }
+            }
+
+            Repaint();
         }
 
-        private void OnGUI()
+        protected void SelectionSingle(Object obj)
+        {
+            if (_sortedAssetList.Find((a) => a.Asset == obj) is { } asset) SelectionSingle(asset);
+        }
+
+        protected void SelectionSingle(AssetEntry asset)
+        {
+            RecordCurrentSelection(asset.Asset);
+
+            bool isSameObject = _currentSelectionEntry == asset;
+
+            _currentSelectionEntry = _startSelectionEntry = asset;
+
+            _selections.Clear();
+            _selections.Add(asset.Asset);
+
+            SelectionChanged();
+
+            if (isSameObject) EditorGUIUtility.PingObject(asset.Asset);
+        }
+
+        protected void SelectionSingleToggle(AssetEntry asset)
+        {
+            if (_selections.Contains(asset.Asset) && _selections.Count <= 1) return;
+
+            _currentSelectionEntry = _startSelectionEntry = asset;
+
+            if (_selections.Contains(asset.Asset)) _selections.Remove(asset.Asset);
+            else _selections.Add(asset.Asset);
+
+            SelectionChanged();
+        }
+
+        protected void SelectionSetAll()
+        {
+            _selections.Clear();
+
+            foreach (AssetEntry asset in _sortedAssetList)
+            {
+                _selections.Add(asset.Asset);
+            }
+
+            SelectionChanged();
+        }
+
+        protected void SelectionToRange(AssetEntry asset)
+        {
+            if (_startSelectionEntry == null)
+            {
+                SelectionSingle(asset);
+                return;
+            }
+
+            _selections.Clear();
+
+            int index = _sortedAssetList.IndexOf(_startSelectionEntry);
+
+            int target_index = _sortedAssetList.IndexOf(asset);
+
+            for (; index != target_index; index += index > target_index ? -1 : 1)
+            {
+                _selections.Add(_sortedAssetList[index].Asset);
+            }
+
+            _selections.Add(asset.Asset);
+
+            _currentSelectionEntry = asset;
+            SelectionChanged();
+        }
+
+        protected void SelectionChanged()
+        {
+            _currentObject = null;
+            foreach (Object selection in _selections)
+            {
+                _currentObject = selection;
+                break;
+            }
+
+            _currentEditor.SetTargetObjects(_selections.ToArray());
+            Repaint();
+        }
+
+        protected void RecordCurrentSelection(Object nextSelection = null)
+        {
+            if (_currentSelectionEntry != null && _currentSelectionEntry.Asset == nextSelection) return;
+
+            if (_isSelectedPrevious)
+            {
+                _isSelectedPrevious = false;
+                return;
+            }
+
+            if (_currentSelectionEntry != null)
+            {
+                ScriptableObject entry = (ScriptableObject)_currentSelectionEntry.Asset;
+
+                if (EditorHistory.Count > 0 && entry == EditorHistory.Last()) return;
+
+                EditorHistory.AddLast(entry);
+                while (EditorHistory.Count > EDITOR_HISTORY_MAX) EditorHistory.RemoveFirst();
+            }
+        }
+
+
+        protected void SelectPrevious()
+        {
+            while (EditorHistory.Count > 0 && EditorHistory.Last() == null) EditorHistory.RemoveLast();
+
+            if (EditorHistory.Count <= 0) return;
+
+            ScriptableObject lastObject = EditorHistory.Last();
+
+            EditorHistory.RemoveLast();
+            _isSelectedPrevious = true;
+
+            OpenObject(lastObject);
+        }
+
+
+        protected void OnInspect(Rect area)
+        {
+            area.x = area.y = 0;
+
+            if (_currentEditor == null) return;
+
+            _inspectScroll = EditorGUILayout.BeginScrollView(_inspectScroll);
+            _currentEditor.RenderInspector();
+
+            EditorGUILayout.EndScrollView();
+        }
+
+        protected static string ReverseString(string s)
+        {
+            char[] arr = s.ToCharArray();
+
+            Array.Reverse(arr);
+
+            return new string(arr);
+        }
+
+        protected void RenameCurrentEntry()
+        {
+            if (_currentObject == null) return;
+
+            Rect rect = new()
+            {
+                position = position.position
+            };
+
+            rect.y += 42;
+            rect.x += 32;
+
+            rect.width = BROWSE_AREA_WIDTH - 34;
+            rect.height = 18;
+
+            PopupWindow.Show(rect, new CreateNewEntryPopup(rect, _currentObject.name, FinishRenameCurrentEntry));
+        }
+
+        protected void FinishRenameCurrentEntry(string newName)
+        {
+            if (_currentObject == null) return;
+
+            string path = AssetDatabase.GetAssetPath(_currentObject);
+
+            if (AssetDatabase.LoadAssetAtPath<Object>(path) != _currentObject) return;
+
+            string folderPath = path.Substring(0, path.LastIndexOf('/') + 1);
+
+
+            string newPath = $"{folderPath}{newName}{SUFFIX_NAME}";
+
+            if (AssetDatabase.LoadAssetAtPath<Object>(newPath) != null) return;
+
+            _currentObject.name = newName;
+
+            EditorUtility.SetDirty(_currentObject);
+            AssetDatabase.RenameAsset(path, $"{newName}{SUFFIX_NAME}");
+            AssetDatabase.SaveAssets();
+
+            SyncAssetEntry(_currentSelectionEntry);
+        }
+
+        protected void ImportEntries()
+        {
+            var r = new Rect
+            {
+                position = position.position
+            };
+
+            r.y += 42;
+            r.x += 32;
+            r.width = BROWSE_AREA_WIDTH - 34;
+            r.height = 18;
+
+
+            string path = EditorUtility.OpenFilePanel(TOOLBAR_PLUS_NAME, "", "tsv");
+            if (path.Length != 0)
+            {
+                FinishImportEntries(path);
+            }
+        }
+
+        protected void CreateNewEntry()
+        {
+            var rect = new Rect
+            {
+                position = position.position
+            };
+
+            rect.y += 42;
+            rect.x += 32;
+
+            rect.width = BROWSE_AREA_WIDTH - 34;
+            rect.height = 18;
+
+            PopupWindow.Show(rect, new CreateNewEntryPopup(rect, "", FinishCreateNewEntry));
+        }
+
+        protected void FinishCreateNewEntry(string name)
+        {
+            CreateNewEntry(name);
+            Repaint();
+        }
+
+        protected void FinishImportEntries(string directory)
+        {
+            Repaint();
+
+            _currentEditor.ImportBatchData(directory, AddAssetEntry);
+        }
+
+
+        protected void CreateNewEntry(string name)
+        {
+            string path;
+
+            if (_currentEditor.CreateDataFolder)
+            {
+                AssetDatabase.CreateFolder(_currentEditor.DefaultStoragePath, name);
+                path = $"{_currentEditor.DefaultStoragePath}/{name}/{name}.asset";
+            }
+            else
+                path = $"{_currentEditor.DefaultStoragePath}/{name}.asset";
+
+            ScriptableObject instance = CreateInstance(_currentType);
+            instance.name = name;
+            AssetDatabase.CreateAsset(instance, path);
+            AddAssetEntry(instance);
+        }
+
+        #region Context Menu
+
+        protected void OnGUI()
         {
             Rect pos = position;
             pos.x -= pos.xMin;
             pos.y -= pos.yMin;
 
-            Rect rect_browse = pos;
-            Rect rect_inspect = pos;
-            rect_browse.width = BROWSE_AREA_WIDTH;
-            rect_inspect.x += BROWSE_AREA_WIDTH;
+            Rect rectBrowse = pos;
+            Rect rectInspect = pos;
+            rectBrowse.width = BROWSE_AREA_WIDTH;
+            rectInspect.x += BROWSE_AREA_WIDTH;
 
-            rect_inspect.width -= BROWSE_AREA_WIDTH;
+            rectInspect.width -= BROWSE_AREA_WIDTH;
 
-            GUILayout.BeginArea(rect_browse, EditorStyles.helpBox);
-            OnBrowse(rect_browse);
+            GUILayout.BeginArea(rectBrowse, EditorStyles.helpBox);
+            OnBrowse(rectBrowse);
             GUILayout.EndArea();
 
-            GUILayout.BeginArea(rect_inspect, EditorStyles.helpBox);
-            OnInspect(rect_inspect);
+            GUILayout.BeginArea(rectInspect, EditorStyles.helpBox);
+            OnInspect(rectInspect);
             GUILayout.EndArea();
         }
 
-        void SetupEditorAssets()
-        {
-            text_scriptable_object = EditorGUIUtility.FindTexture("UnityEditor.ConsoleWindow");
-            selected_style = new GUIStyle();
-            var t = new Texture2D(1, 1);
-            t.SetPixel(0, 0, new Color(62 / 255f, 125 / 255f, 231 / 255f));
-            t.Apply();
-            selected_style.normal.background = t;
-            selected_style.normal.textColor = Color.white;
-            selected_style.fixedHeight = 18;
-        }
-
-        static Texture2D text_scriptable_object = null;
-        static GUIStyle selected_style = null;
-
-        Vector2 browse_scroll = new Vector2();
-        string filter_text = "";
-
-        void ResortEntries(string filter_text)
-        {
-            var r_filter_text = ReverseString(filter_text);
-            this.filter_text = filter_text;
-            filter_text = filter_text.ToLower();
-            foreach (var entry in asset_list)
-            {
-                if (filter_text.Length == 0)
-                {
-                    entry.visible = true;
-                    continue;
-                }
-
-                if (filter_text.Length > entry.path.Length) continue;
-
-                var last_index = 0;
-                var path = entry.path.ToLower();
-                for (var i = 0; i < filter_text.Length; i++)
-                {
-                    last_index = path.IndexOf(filter_text[i], last_index);
-                    if (last_index < 0) break;
-                    last_index++;
-                }
-
-                entry.visible = last_index >= 0;
-                if (entry.visible)
-                {
-                    int match_amount, r_match_amount;
-                    FuzzyMatch(entry.rpath, r_filter_text, out match_amount);
-                    FuzzyMatch(entry.path, filter_text, out r_match_amount);
-                    entry.match_amount = Mathf.Max(match_amount, r_match_amount);
-                }
-            }
-
-            sorted_asset_list = new List<AssetEntry>(asset_list);
-            sorted_asset_list.RemoveAll((a) => a.visible == false);
-            if (filter_text.Length > 0) sorted_asset_list.Sort((e2, e1) => e1.match_amount.CompareTo(e2.match_amount));
-        }
-
-        bool browse_control_focused = false;
-
-        void OnBrowse(Rect area)
+        private void OnBrowse(Rect area)
         {
             area.x = area.y = 0;
-            var dummy_control_name = this.GetHashCode() + "FILTER_DUMMY";
-            var filter_control_name = this.GetHashCode() + "FILTER";
-            var focus_control_name = this.GetHashCode() + "browse_focus_id";
+
+            string dummyControlName = $"{GetHashCode()}{FILTER_DUMMY}";
+            string filterControlName = $"{GetHashCode()}{FILTER}";
+            string focusControlName = $"{GetHashCode()}{BROWSE_FOCUS_ID}";
 
             GUI.color = Color.clear;
-            var dummy_control_rect = EditorGUILayout.GetControlRect(false, 0);
-            dummy_control_rect.width = 0;
-            GUI.SetNextControlName(dummy_control_name);
-            EditorGUI.TextField(dummy_control_rect, "");
+
+            Rect dummyControlRect = EditorGUILayout.GetControlRect(false, 0);
+
+            dummyControlRect.width = 0;
+            GUI.SetNextControlName(dummyControlName);
+            EditorGUI.TextField(dummyControlRect, "");
             GUI.color = Color.white;
 
-            var new_editor_type_index = EditorGUILayout.Popup(this.currentEditorTypeIndex, browsable_type_names);
-            if (new_editor_type_index != this.currentEditorTypeIndex)
-                this.SwitchToEditorType(browsable_types[new_editor_type_index]);
+            int newEditorTypeIndex = EditorGUILayout.Popup(_currentTypeIndex, _browsableTypeNames);
+
+            if (newEditorTypeIndex != _currentTypeIndex)
+                GetType(BrowsableTypes[newEditorTypeIndex]);
 
             EditorGUILayout.BeginHorizontal();
 
-            GUI.enabled = currentEditor?.DefaultStoragePath != null;
+            GUI.enabled = _currentEditor?.DefaultStoragePath != null;
             if (GUILayout.Button(EditorGUIUtility.IconContent("Toolbar Plus"), EditorStyles.miniButton,
                     GUILayout.Width(24), GUILayout.Height(18)))
-                this.CreateNewEntry();
+                CreateNewEntry();
             GUI.enabled = true;
 
-            GUI.enabled = currentEditor?.DefaultStoragePath != null;
+            GUI.enabled = _currentEditor?.DefaultStoragePath != null;
             if (GUILayout.Button(EditorGUIUtility.IconContent("Toolbar Plus More"), EditorStyles.miniButton,
                     GUILayout.Width(24), GUILayout.Height(18)))
-                this.ImportEntries();
+                ImportEntries();
             GUI.enabled = true;
 
-            GUI.enabled = currentEditor?.ContextMenu != null;
+            GUI.enabled = _currentEditor?.ContextMenu != null;
             if (GUILayout.Button(EditorGUIUtility.IconContent("SettingsIcon"), EditorStyles.miniButton,
                     GUILayout.Width(24), GUILayout.Height(18)))
-                currentEditor?.ContextMenu.ShowAsContext();
+                _currentEditor?.ContextMenu.ShowAsContext();
             GUI.enabled = true;
 
-            GUI.SetNextControlName(filter_control_name);
-            var filter_text = EditorGUILayout.TextField(this.filter_text, (GUIStyle)"SearchTextField");
-            if (filter_text.Length != this.filter_text.Length) ResortEntries(filter_text);
+            GUI.SetNextControlName(filterControlName);
+            var filter_text = EditorGUILayout.TextField(_filterText, (GUIStyle)"SearchTextField");
+            if (filter_text.Length != _filterText.Length) ResortEntries(filter_text);
 
             if (GUILayout.Button(" ", (GUIStyle)"SearchCancelButton"))
             {
@@ -349,12 +673,12 @@ namespace ScriptableObjectBrowser
                 SelectPrevious();
             }
 
-            if (GUI.GetNameOfFocusedControl() == dummy_control_name)
-                GUI.FocusControl(filter_control_name);
+            if (GUI.GetNameOfFocusedControl() == dummyControlName)
+                GUI.FocusControl(filterControlName);
 
             if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.F && Event.current.control)
             {
-                GUI.FocusControl(dummy_control_name);
+                GUI.FocusControl(dummyControlName);
                 Event.current.Use();
             }
 
@@ -362,7 +686,7 @@ namespace ScriptableObjectBrowser
                 (Event.current.control || Event.current.command))
             {
                 Event.current.Use();
-                this.CreateNewEntry();
+                CreateNewEntry();
             }
 
             if (Event.current.type == EventType.KeyDown && (Event.current.keyCode == KeyCode.F2 ||
@@ -370,128 +694,128 @@ namespace ScriptableObjectBrowser
                                                              Event.current.keyCode == KeyCode.R)))
             {
                 Event.current.Use();
-                this.RenameCurrentEntry();
+                RenameCurrentEntry();
             }
 
-            if (GUI.GetNameOfFocusedControl() == filter_control_name && Event.current.type == EventType.Layout)
+            if (GUI.GetNameOfFocusedControl() == filterControlName && Event.current.type == EventType.Layout)
             {
                 if (Event.current.keyCode == KeyCode.Escape)
                 {
                     ResortEntries("");
-                    GUI.FocusControl(dummy_control_name);
+                    GUI.FocusControl(dummyControlName);
                 }
 
                 if (Event.current.keyCode == KeyCode.UpArrow || Event.current.keyCode == KeyCode.DownArrow ||
                     Event.current.keyCode == KeyCode.PageUp || Event.current.keyCode == KeyCode.PageDown)
                 {
-                    GUI.FocusControl(focus_control_name);
+                    GUI.FocusControl(focusControlName);
                 }
             }
 
 
-            browse_scroll =
-                GUILayout.BeginScrollView(browse_scroll, false, false, GUIStyle.none, GUI.skin.verticalScrollbar);
+            _browseScroll =
+                GUILayout.BeginScrollView(_browseScroll, false, false, GUIStyle.none, GUI.skin.verticalScrollbar);
             var rect_entry = new Rect(0, 0, area.width, ENTRY_LINE_HEIGHT);
-            foreach (var asset in sorted_asset_list)
+            foreach (var asset in _sortedAssetList)
                 RenderAssetEntry(asset, ref rect_entry);
             EditorGUILayout.EndScrollView();
 
             var scroll_rect = GUILayoutUtility.GetLastRect();
 
-            GUI.SetNextControlName(focus_control_name);
+            GUI.SetNextControlName(focusControlName);
             GUI.color = Color.clear;
             EditorGUI.Toggle(scroll_rect, true);
             GUI.color = Color.white;
-            this.browse_control_focused = GUI.GetNameOfFocusedControl() == focus_control_name;
+            _isControlFocused = GUI.GetNameOfFocusedControl() == focusControlName;
 
-            if (this.browse_control_focused && sorted_asset_list.Count > 0 && Event.current.type == EventType.KeyDown &&
+            if (_isControlFocused && _sortedAssetList.Count > 0 && Event.current.type == EventType.KeyDown &&
                 Event.current.keyCode == KeyCode.Escape)
             {
                 ResortEntries("");
-                GUI.FocusControl(filter_control_name);
+                GUI.FocusControl(filterControlName);
             }
 
-            if (this.browse_control_focused && sorted_asset_list.Count > 0 && Event.current.type == EventType.KeyDown)
+            if (_isControlFocused && _sortedAssetList.Count > 0 && Event.current.type == EventType.KeyDown)
             {
-                var start_selection_index = sorted_asset_list.IndexOf(startSelectionEntry);
-                var current_selection_index = sorted_asset_list.IndexOf(currentSelectionEntry);
+                var start_selection_index = _sortedAssetList.IndexOf(_startSelectionEntry);
+                var current_selection_index = _sortedAssetList.IndexOf(_currentSelectionEntry);
                 var min_index = 0;
-                var max_index = sorted_asset_list.Count - 1;
+                var max_index = _sortedAssetList.Count - 1;
                 var page_index_count = Mathf.Max(1, Mathf.FloorToInt(scroll_rect.height / ENTRY_LINE_HEIGHT) - 1);
 
                 if (Event.current.keyCode == KeyCode.UpArrow)
                 {
                     var target_asset = current_selection_index < 0
-                        ? currentSelectionEntry = sorted_asset_list[max_index]
-                        : sorted_asset_list[Mathf.Max(min_index, current_selection_index - 1)];
+                        ? _currentSelectionEntry = _sortedAssetList[max_index]
+                        : _sortedAssetList[Mathf.Max(min_index, current_selection_index - 1)];
                     if (Event.current.shift) SelectionToRange(target_asset);
                     else SelectionSingle(target_asset);
                 }
                 else if (Event.current.keyCode == KeyCode.DownArrow)
                 {
                     var target_asset = current_selection_index < 0
-                        ? currentSelectionEntry = sorted_asset_list[min_index]
-                        : sorted_asset_list[Mathf.Min(max_index, current_selection_index + 1)];
+                        ? _currentSelectionEntry = _sortedAssetList[min_index]
+                        : _sortedAssetList[Mathf.Min(max_index, current_selection_index + 1)];
                     if (Event.current.shift) SelectionToRange(target_asset);
                     else SelectionSingle(target_asset);
                 }
                 else if (Event.current.keyCode == KeyCode.PageUp)
                 {
                     var target_asset = current_selection_index < 0
-                        ? currentSelectionEntry = sorted_asset_list[max_index]
-                        : sorted_asset_list[Mathf.Max(min_index, current_selection_index - page_index_count)];
+                        ? _currentSelectionEntry = _sortedAssetList[max_index]
+                        : _sortedAssetList[Mathf.Max(min_index, current_selection_index - page_index_count)];
                     if (Event.current.shift) SelectionToRange(target_asset);
                     else SelectionSingle(target_asset);
                 }
                 else if (Event.current.keyCode == KeyCode.PageDown)
                 {
                     var target_asset = current_selection_index < 0
-                        ? currentSelectionEntry = sorted_asset_list[min_index]
-                        : sorted_asset_list[Mathf.Min(max_index, current_selection_index + page_index_count)];
+                        ? _currentSelectionEntry = _sortedAssetList[min_index]
+                        : _sortedAssetList[Mathf.Min(max_index, current_selection_index + page_index_count)];
                     if (Event.current.shift) SelectionToRange(target_asset);
                     else SelectionSingle(target_asset);
                 }
                 else if (Event.current.keyCode == KeyCode.Home)
                 {
-                    var target_asset = sorted_asset_list[min_index];
+                    var target_asset = _sortedAssetList[min_index];
                     if (Event.current.shift) SelectionToRange(target_asset);
                     else SelectionSingle(target_asset);
                 }
                 else if (Event.current.keyCode == KeyCode.End)
                 {
-                    var target_asset = sorted_asset_list[max_index];
+                    var target_asset = _sortedAssetList[max_index];
                     if (Event.current.shift) SelectionToRange(target_asset);
                     else SelectionSingle(target_asset);
                 }
                 else if ((Event.current.command || Event.current.control) && Event.current.keyCode == KeyCode.A)
                     SelectionSetAll();
 
-                current_selection_index = sorted_asset_list.IndexOf(currentSelectionEntry);
+                current_selection_index = _sortedAssetList.IndexOf(_currentSelectionEntry);
                 var selection_y = current_selection_index * ENTRY_LINE_HEIGHT;
-                if (selection_y < browse_scroll.y) browse_scroll.y = Mathf.Max(0, selection_y - ENTRY_LINE_HEIGHT / 2);
-                if (selection_y > browse_scroll.y + scroll_rect.height - ENTRY_LINE_HEIGHT * 2)
+                if (selection_y < _browseScroll.y) _browseScroll.y = Mathf.Max(0, selection_y - ENTRY_LINE_HEIGHT / 2);
+                if (selection_y > _browseScroll.y + scroll_rect.height - ENTRY_LINE_HEIGHT * 2)
                 {
-                    var max = ENTRY_LINE_HEIGHT * sorted_asset_list.Count - scroll_rect.height + 14;
-                    browse_scroll.y = Mathf.Min(max, selection_y - scroll_rect.height + 50);
+                    var max = ENTRY_LINE_HEIGHT * _sortedAssetList.Count - scroll_rect.height + 14;
+                    _browseScroll.y = Mathf.Min(max, selection_y - scroll_rect.height + 50);
                 }
             }
 
             #region SHIFT MOVE SELECTION WHILE EDITING
 
-            if (!this.browse_control_focused && sorted_asset_list.Count > 0 &&
+            if (!_isControlFocused && _sortedAssetList.Count > 0 &&
                 Event.current.type == EventType.KeyDown && (Event.current.control || Event.current.command))
             {
-                var start_selection_index = sorted_asset_list.IndexOf(startSelectionEntry);
-                var current_selection_index = sorted_asset_list.IndexOf(currentSelectionEntry);
+                var start_selection_index = _sortedAssetList.IndexOf(_startSelectionEntry);
+                var current_selection_index = _sortedAssetList.IndexOf(_currentSelectionEntry);
                 var min_index = 0;
-                var max_index = sorted_asset_list.Count - 1;
+                var max_index = _sortedAssetList.Count - 1;
                 var page_index_count = Mathf.Max(1, Mathf.FloorToInt(scroll_rect.height / ENTRY_LINE_HEIGHT) - 1);
 
                 if (Event.current.keyCode == KeyCode.UpArrow)
                 {
                     var target_asset = current_selection_index < 0
-                        ? currentSelectionEntry = sorted_asset_list[max_index]
-                        : sorted_asset_list[Mathf.Max(min_index, current_selection_index - 1)];
+                        ? _currentSelectionEntry = _sortedAssetList[max_index]
+                        : _sortedAssetList[Mathf.Max(min_index, current_selection_index - 1)];
                     SelectionSingle(target_asset);
                     GUIUtility.keyboardControl = 0;
                     ;
@@ -499,24 +823,24 @@ namespace ScriptableObjectBrowser
                 else if (Event.current.keyCode == KeyCode.DownArrow)
                 {
                     var target_asset = current_selection_index < 0
-                        ? currentSelectionEntry = sorted_asset_list[min_index]
-                        : sorted_asset_list[Mathf.Min(max_index, current_selection_index + 1)];
+                        ? _currentSelectionEntry = _sortedAssetList[min_index]
+                        : _sortedAssetList[Mathf.Min(max_index, current_selection_index + 1)];
                     SelectionSingle(target_asset);
                     GUIUtility.keyboardControl = 0;
                 }
                 else if (Event.current.keyCode == KeyCode.PageUp)
                 {
                     var target_asset = current_selection_index < 0
-                        ? currentSelectionEntry = sorted_asset_list[max_index]
-                        : sorted_asset_list[Mathf.Max(min_index, current_selection_index - page_index_count)];
+                        ? _currentSelectionEntry = _sortedAssetList[max_index]
+                        : _sortedAssetList[Mathf.Max(min_index, current_selection_index - page_index_count)];
                     SelectionSingle(target_asset);
                     GUIUtility.keyboardControl = 0;
                 }
                 else if (Event.current.keyCode == KeyCode.PageDown)
                 {
                     var target_asset = current_selection_index < 0
-                        ? currentSelectionEntry = sorted_asset_list[min_index]
-                        : sorted_asset_list[Mathf.Min(max_index, current_selection_index + page_index_count)];
+                        ? _currentSelectionEntry = _sortedAssetList[min_index]
+                        : _sortedAssetList[Mathf.Min(max_index, current_selection_index + page_index_count)];
                     SelectionSingle(target_asset);
                     GUIUtility.keyboardControl = 0;
                 }
@@ -525,479 +849,6 @@ namespace ScriptableObjectBrowser
             #endregion
         }
 
-        HashSet<Object> selections = new HashSet<Object>();
-        AssetEntry startSelectionEntry, currentSelectionEntry;
-
-        void RenderAssetEntry(AssetEntry asset, ref Rect rect_entry)
-        {
-            if (asset.visible == false) return;
-            EditorGUILayout.BeginHorizontal(GUILayout.MinWidth(rect_entry.width));
-
-            var selected_color = this.browse_control_focused
-                ? new Color(62 / 255f, 125 / 255f, 231 / 255f)
-                : new Color(0.6f, 0.6f, 0.6f);
-            if (selections.Contains(asset.asset)) EditorGUI.DrawRect(rect_entry, selected_color);
-
-            var content = new GUIContent(asset.name, text_scriptable_object);
-            EditorGUILayout.LabelField(content, EditorStyles.boldLabel,
-                GUILayout.Width(EditorStyles.boldLabel.CalcSize(content).x));
-            EditorGUILayout.LabelField(asset.path, EditorStyles.miniLabel);
-            EditorGUILayout.EndHorizontal();
-            rect_entry.y += rect_entry.height;
-
-            var r = GUILayoutUtility.GetLastRect();
-            if (Event.current.type == EventType.MouseDown && Event.current.button == 0 &&
-                r.Contains(Event.current.mousePosition))
-            {
-                if (Event.current.control)
-                    SelectionSingleToogle(asset);
-                else if (Event.current.shift && currentSelectionEntry != null)
-                    SelectionToRange(asset);
-                else
-                    SelectionSingle(asset);
-
-                Repaint();
-            }
-        }
-
-        void SelectionSingle(Object obj)
-        {
-            var asset = this.sorted_asset_list.Find((a) => a.asset == obj);
-            if (asset != null) SelectionSingle(asset);
-        }
-
-        void SelectionSingle(AssetEntry asset)
-        {
-            RecordCurrentSelection(asset.asset);
-            bool same_obj = currentSelectionEntry == asset;
-            currentSelectionEntry = startSelectionEntry = asset;
-            selections.Clear();
-            selections.Add(asset.asset);
-            SelectionChanged();
-
-            if (same_obj) EditorGUIUtility.PingObject(asset.asset);
-        }
-
-        void SelectionSingleToogle(AssetEntry asset)
-        {
-            if (selections.Contains(asset.asset) && selections.Count <= 1) return;
-            currentSelectionEntry = startSelectionEntry = asset;
-            if (selections.Contains(asset.asset)) selections.Remove(asset.asset);
-            else selections.Add(asset.asset);
-            SelectionChanged();
-        }
-
-        void SelectionSetAll()
-        {
-            selections.Clear();
-            foreach (var asset in sorted_asset_list) selections.Add(asset.asset);
-            SelectionChanged();
-        }
-
-        void SelectionToRange(AssetEntry asset)
-        {
-            if (startSelectionEntry == null)
-            {
-                SelectionSingle(asset);
-                return;
-            }
-
-            selections.Clear();
-            var index = sorted_asset_list.IndexOf(startSelectionEntry);
-            var target_index = sorted_asset_list.IndexOf(asset);
-
-            for (; index != target_index; index += index > target_index ? -1 : 1)
-                selections.Add(sorted_asset_list[index].asset);
-            selections.Add(asset.asset);
-
-            currentSelectionEntry = asset;
-            SelectionChanged();
-        }
-
-        void SelectionChanged()
-        {
-            this.currentObject = null;
-            foreach (var selection in selections)
-            {
-                this.currentObject = selection;
-                break;
-            }
-
-            this.currentEditor.SetTargetObjects(selections.ToArray());
-            Repaint();
-        }
-
-        void RecordCurrentSelection(Object next_selection = null)
-        {
-            if (currentSelectionEntry != null && currentSelectionEntry.asset == next_selection) return;
-
-            if (selecting_previous)
-            {
-                selecting_previous = false;
-                return;
-            }
-
-            if (currentSelectionEntry != null)
-            {
-                var entry = (ScriptableObject)currentSelectionEntry.asset;
-                if (EditorHistory.Count > 0 && entry == EditorHistory.Last())
-                {
-                    return;
-                }
-
-                EditorHistory.AddLast(entry);
-                while (EditorHistory.Count > EDITOR_HISTORY_MAX) EditorHistory.RemoveFirst();
-            }
-        }
-
-        static bool selecting_previous = false;
-
-        void SelectPrevious()
-        {
-            while (EditorHistory.Count > 0 && EditorHistory.Last() == null) EditorHistory.RemoveLast();
-            if (EditorHistory.Count <= 0) return;
-
-            var last = EditorHistory.Last();
-            EditorHistory.RemoveLast();
-            selecting_previous = true;
-
-            OpenObject(last);
-        }
-
-        Vector2 inspectScroll = new Vector2(0, 0);
-
-        void OnInspect(Rect area)
-        {
-            area.x = area.y = 0;
-            if (currentEditor == null) return;
-            inspectScroll = EditorGUILayout.BeginScrollView(inspectScroll);
-            currentEditor.RenderInspector();
-            EditorGUILayout.EndScrollView();
-        }
-
-        static string ReverseString(string s)
-        {
-            char[] arr = s.ToCharArray();
-            Array.Reverse(arr);
-            return new string(arr);
-        }
-
-        void RenameCurrentEntry()
-        {
-            if (currentObject == null) return;
-            var r = new Rect();
-            r.position = this.position.position;
-            r.y += 42;
-            r.x += 32;
-            r.width = BROWSE_AREA_WIDTH - 34;
-            r.height = 18;
-            PopupWindow.Show(r, new CreateNewEntryPopup(r, currentObject.name, FinishRenameCurrentEntry));
-        }
-
-        void FinishRenameCurrentEntry(string newName)
-        {
-            if (currentObject == null) return;
-            var path = AssetDatabase.GetAssetPath(currentObject);
-
-            if (AssetDatabase.LoadAssetAtPath<Object>(path) != currentObject) return;
-            var folderPath = path.Substring(0, path.LastIndexOf('/') + 1);
-
-            var new_path = folderPath + newName + ".asset";
-            if (AssetDatabase.LoadAssetAtPath<Object>(new_path) != null) return;
-
-            currentObject.name = newName;
-            EditorUtility.SetDirty(currentObject);
-            AssetDatabase.RenameAsset(path, newName + ".asset");
-            AssetDatabase.SaveAssets();
-            SyncAssetEntry(currentSelectionEntry);
-        }
-
-        void ImportEntries()
-
-            #region ImportEntries
-
-        {
-            var r = new Rect();
-            r.position = this.position.position;
-            r.y += 42;
-            r.x += 32;
-            r.width = BROWSE_AREA_WIDTH - 34;
-            r.height = 18;
-
-            string path = EditorUtility.OpenFilePanel("Toolbar Plus More", "", "tsv");
-            if (path.Length != 0)
-            {
-                FinishImportEntries(path);
-            }
-        }
-
-        void CreateNewEntry()
-
-            #region CreateNewEntry
-
-        {
-            var r = new Rect();
-            r.position = this.position.position;
-            r.y += 42;
-            r.x += 32;
-            r.width = BROWSE_AREA_WIDTH - 34;
-            r.height = 18;
-            PopupWindow.Show(r, new CreateNewEntryPopup(r, "", FinishCreateNewEntry));
-        }
-
-        #region Create new entry popup
-
-        class CreateNewEntryPopup : PopupWindowContent
-        {
-            Rect position;
-            string entryValue = "";
-            bool err = false;
-            Action<string> callback;
-
-            public CreateNewEntryPopup(Rect r, string currentEntryValue, Action<string> callback)
-            {
-                entryValue = currentEntryValue;
-                this.position = r;
-                this.callback = callback;
-            }
-
-            public override Vector2 GetWindowSize()
-            {
-                var size = this.position.size;
-                if (err) size.y += size.y + 4;
-                return size;
-            }
-
-            bool autoFocus = true;
-
-            public override void OnGUI(Rect rect)
-            {
-                this.editorWindow.position = position;
-                if (Event.current.keyCode == KeyCode.Escape) this.editorWindow.Close();
-
-                rect.x = rect.y = 0;
-                rect.height = 18;
-                GUI.SetNextControlName("Name");
-                entryValue = EditorGUI.TextField(rect, entryValue);
-                GUI.FocusControl("Name");
-                if (autoFocus)
-                {
-                    if (entryValue.Length > 0) EditorGUI.FocusTextInControl("Name");
-                    autoFocus = false;
-                }
-
-                if (err)
-                {
-                    rect.y += rect.height + 2;
-                    rect.x += 2;
-                    rect.width -= 4;
-                    EditorGUI.HelpBox(rect, "Object with the same name already exist", MessageType.Error);
-                }
-
-                if (Event.current.keyCode == KeyCode.Return) this.ConfirmNewEntry();
-            }
-
-            void ConfirmNewEntry()
-            {
-                if (this.err) return;
-                this.editorWindow.Close();
-                this.callback?.Invoke(this.entryValue);
-            }
-        }
-
         #endregion
-
-        void FinishCreateNewEntry(string name)
-        {
-            var e = this.currentEditor;
-            CreateNewEntry(name);
-            Repaint();
-        }
-
-        void FinishImportEntries(string directory)
-        {
-            Repaint();
-
-            var e = this.currentEditor;
-            this.currentEditor.ImportBatchData(directory, AddAssetEntry);
-        }
-
-        #endregion
-
-        public Object CreateNewEntry(string name)
-        {
-            var e = this.currentEditor;
-            string path;
-
-            if (this.currentEditor.CreateDataFolder)
-            {
-                AssetDatabase.CreateFolder(this.currentEditor.DefaultStoragePath, name);
-                path = this.currentEditor.DefaultStoragePath + "/" + name + "/" + name + ".asset";
-            }
-            else
-                path = this.currentEditor.DefaultStoragePath + "/" + name + ".asset";
-
-            ScriptableObject instance = ScriptableObject.CreateInstance(this.currentType);
-            instance.name = name;
-            AssetDatabase.CreateAsset(instance, path);
-            this.AddAssetEntry(instance);
-
-            return instance;
-        }
-
-        public List<Object> CreateNewEntries(IEnumerable<string> names)
-        {
-            var e = this.currentEditor;
-            List<Object> entries = new List<Object>();
-
-            foreach (var name in names)
-            {
-                string path;
-                if (this.currentEditor.CreateDataFolder)
-                {
-                    AssetDatabase.CreateFolder(this.currentEditor.DefaultStoragePath, name);
-                    path = this.currentEditor.DefaultStoragePath + "/" + name + "/" + name + ".asset";
-                }
-                else
-                    path = this.currentEditor.DefaultStoragePath + "/" + name + ".asset";
-
-                if (AssetDatabase.LoadAssetAtPath(path, typeof(Object)) != null) continue;
-
-                ScriptableObject instance = (ScriptableObject)Activator.CreateInstance(this.currentType);
-                instance.name = name;
-
-                AssetDatabase.CreateAsset(instance, path);
-                entries.Add(instance);
-            }
-
-            AddAssetEntries(entries);
-            return entries;
-        }
-
-        #endregion
-
-
-        public static bool FuzzyMatch(string stringToSearch, string pattern, out int outScore)
-        {
-            // Score consts
-            const int adjacencyBonus = 3; // bonus for adjacent matches
-            const int separatorBonus = 10; // bonus if match occurs after a separator
-            const int camelBonus = 10; // bonus if match is uppercase and prev is lower
-
-            const int
-                leadingLetterPenalty = -3; // penalty applied for every letter in stringToSearch before the first match
-            const int maxLeadingLetterPenalty = -9; // maximum penalty for leading letters
-            const int unmatchedLetterPenalty = -1; // penalty for every letter that doesn't matter
-
-
-            // Loop variables
-            var score = 0;
-            var patternIdx = 0;
-            var patternLength = pattern.Length;
-            var strIdx = 0;
-            var strLength = stringToSearch.Length;
-            var prevMatched = false;
-            var prevLower = false;
-            var prevSeparator = true; // true if first letter match gets separator bonus
-
-            // Use "best" matched letter if multiple string letters match the pattern
-            char? bestLetter = null;
-            char? bestLower = null;
-            int? bestLetterIdx = null;
-            var bestLetterScore = 0;
-
-            var matchedIndices = new List<int>();
-
-            // Loop over strings
-            while (strIdx != strLength)
-            {
-                var patternChar = patternIdx != patternLength ? pattern[patternIdx] as char? : null;
-                var strChar = stringToSearch[strIdx];
-
-                var patternLower = patternChar != null ? char.ToLower((char)patternChar) as char? : null;
-                var strLower = char.ToLower(strChar);
-                var strUpper = char.ToUpper(strChar);
-
-                var nextMatch = patternChar != null && patternLower == strLower;
-                var rematch = bestLetter != null && bestLower == strLower;
-
-                var advanced = nextMatch && bestLetter != null;
-                var patternRepeat = bestLetter != null && patternChar != null && bestLower == patternLower;
-                if (advanced || patternRepeat)
-                {
-                    score += bestLetterScore;
-                    matchedIndices.Add((int)bestLetterIdx);
-                    bestLetter = null;
-                    bestLower = null;
-                    bestLetterIdx = null;
-                    bestLetterScore = 0;
-                }
-
-                if (nextMatch || rematch)
-                {
-                    var newScore = 0;
-
-                    // Apply penalty for each letter before the first pattern match
-                    // Note: Math.Max because penalties are negative values. So max is smallest penalty.
-                    if (patternIdx == 0)
-                    {
-                        var penalty = Mathf.Max(strIdx * leadingLetterPenalty, maxLeadingLetterPenalty);
-                        score += penalty;
-                    }
-
-                    // Apply bonus for consecutive bonuses
-                    if (prevMatched)
-                        newScore += adjacencyBonus;
-
-                    // Apply bonus for matches after a separator
-                    if (prevSeparator)
-                        newScore += separatorBonus;
-
-                    // Apply bonus across camel case boundaries. Includes "clever" isLetter check.
-                    if (prevLower && strChar == strUpper && strLower != strUpper)
-                        newScore += camelBonus;
-
-                    // Update pattern index IF the next pattern letter was matched
-                    if (nextMatch)
-                        ++patternIdx;
-
-                    // Update best letter in stringToSearch which may be for a "next" letter or a "rematch"
-                    if (newScore >= bestLetterScore)
-                    {
-                        // Apply penalty for now skipped letter
-                        if (bestLetter != null)
-                            score += unmatchedLetterPenalty;
-
-                        bestLetter = strChar;
-                        bestLower = char.ToLower((char)bestLetter);
-                        bestLetterIdx = strIdx;
-                        bestLetterScore = newScore;
-                    }
-
-                    prevMatched = true;
-                }
-                else
-                {
-                    score += unmatchedLetterPenalty;
-                    prevMatched = false;
-                }
-
-                // Includes "clever" isLetter check.
-                prevLower = strChar == strLower && strLower != strUpper;
-                prevSeparator = strChar == '_' || strChar == ' ';
-
-                ++strIdx;
-            }
-
-            // Apply score for last match
-            if (bestLetter != null)
-            {
-                score += bestLetterScore;
-                matchedIndices.Add((int)bestLetterIdx);
-            }
-
-            outScore = score;
-            return patternIdx == patternLength;
-        }
     }
 }
