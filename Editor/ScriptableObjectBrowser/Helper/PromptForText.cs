@@ -1,15 +1,11 @@
-﻿using UnityEngine;
+﻿using System;
 using UnityEditor;
-using System;
-using System.Collections;
-using System.Collections.Generic;
+using UnityEngine;
 
-namespace ScriptableObjectBrowser
+namespace IndiGamesEditor.Tools.Editor.ScriptableObjectBrowser
 {
-
     public class PromptForText : PopupWindowContent
     {
-
         public static void Show(string prompt, Action<string> callback)
         {
             PopupWindow.Show(GUILayoutUtility.GetLastRect(), new PromptForText(prompt, callback));
@@ -33,26 +29,24 @@ namespace ScriptableObjectBrowser
         public override void OnGUI(Rect rect)
         {
             GUILayout.BeginArea(rect);
-            EditorGUILayout.LabelField(this.prompt);
+            EditorGUILayout.LabelField(prompt);
 
             if (Event.current.type == EventType.KeyDown)
             {
-                if (Event.current.keyCode == KeyCode.Escape) this.editorWindow.Close();
+                if (Event.current.keyCode == KeyCode.Escape) editorWindow.Close();
                 if (Event.current.keyCode == KeyCode.Return)
                 {
                     callback(content);
-                    this.editorWindow.Close();
+                    editorWindow.Close();
                 }
             }
 
-            GUI.SetNextControlName(this.GetHashCode().ToString());
+            GUI.SetNextControlName(GetHashCode().ToString());
             content = EditorGUILayout.TextField(content);
-            GUI.FocusControl(this.GetHashCode().ToString());
+            GUI.FocusControl(GetHashCode().ToString());
 
 
             GUILayout.EndArea();
         }
     }
-
-
 }
