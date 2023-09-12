@@ -22,7 +22,7 @@ namespace IndiGames.Tools.ScriptableObjectBrowser
         private const string FILTER_DUMMY = "FILTER_DUMMY";
         private const string FILTER = "FILTER";
         private const string BROWSE_FOCUS_ID = "browse_focus_id";
-        private const string EXTENSION_TYPE = "tsv,csv,xlsx";
+        private const string EXTENSION_TYPE = "tsv";
 
         private static readonly LinkedList<ScriptableObject> EditorHistory = new();
         private static readonly List<Type> BrowsableTypes = new();
