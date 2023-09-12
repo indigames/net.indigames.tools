@@ -22,6 +22,7 @@ namespace IndiGames.Tools.ScriptableObjectBrowser
         private const string FILTER_DUMMY = "FILTER_DUMMY";
         private const string FILTER = "FILTER";
         private const string BROWSE_FOCUS_ID = "browse_focus_id";
+        private const string EXTENSION_TYPE = "tsv,csv,xlsx";
 
         private static readonly LinkedList<ScriptableObject> EditorHistory = new();
         private static readonly List<Type> BrowsableTypes = new();
@@ -530,7 +531,7 @@ namespace IndiGames.Tools.ScriptableObjectBrowser
             r.height = 18;
 
 
-            string path = EditorUtility.OpenFilePanel(TOOLBAR_PLUS_NAME, "", "tsv");
+            string path = EditorUtility.OpenFilePanel(TOOLBAR_PLUS_NAME, "", EXTENSION_TYPE);
             if (path.Length != 0)
             {
                 FinishImportEntries(path);
